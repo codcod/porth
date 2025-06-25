@@ -31,7 +31,16 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
     try:
         # Parse request body
         data = await request.json()
-        sms_request = SMSRequest(**data)
+
+        # Support both field naming conventions
+        normalized_data = {
+            'from_number': data.get('from_number') or data.get('source_addr'),
+            'to_number': data.get('to_number') or data.get('destination_addr'),
+            'message': data.get('message') or data.get('message_text'),
+            'dlr_url': data.get('dlr_url')
+        }
+
+        sms_request = SMSRequest(**normalized_data)
 
         # Create internal message
         message = SMSMessage(
