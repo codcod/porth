@@ -1,0 +1,17 @@
+# Test Configuration
+http:
+  host: "127.0.0.1"
+  port: 8081
+
+smpp:
+  servers: []
+  clients: []
+
+delivery:
+  max_retries: 1
+  retry_delay: 1
+  worker_count: 1
+
+# Test-specific settings
+debug: true
+log_level: "DEBUG"

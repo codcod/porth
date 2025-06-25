@@ -1,0 +1,25 @@
+# Production Configuration
+http:
+  host: "0.0.0.0"
+  port: 8080
+
+smpp:
+  servers:
+    - host: "0.0.0.0"
+      port: 2775
+      system_id: "${SMPP_SYSTEM_ID}"
+      password: "${SMPP_PASSWORD}"
+  clients:
+    - host: "${SMSC_HOST}"
+      port: 2775
+      system_id: "${SMSC_SYSTEM_ID}"
+      password: "${SMSC_PASSWORD}"
+
+delivery:
+  max_retries: 5
+  retry_delay: 10
+  worker_count: 10
+
+# Production-specific settings
+debug: false
+log_level: "INFO"

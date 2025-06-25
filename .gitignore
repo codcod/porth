@@ -1,13 +1,70 @@
-# Python-generated files
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.py[cod]
+*$py.class
 
 # Virtual environments
-.venv
+.venv/
+env/
+venv/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Pytest cache
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environment files
+.env
+.env.*
+
+# UV
+uv.lock
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# YAML config overrides (optional, if you have local-only config)
+config/*.local.yml
+
+# Logs
+*.log
+
+# Docker
+*.pid
+
+# Ignore secrets (if any)
+secrets.*
 
 # Some docs
 docs/prompt-engineering/
