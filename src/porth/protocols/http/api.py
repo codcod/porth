@@ -14,14 +14,18 @@ def create_http_app(message_queue: MessageQueue, settings: Settings) -> web.Appl
     """Create aiohttp application with SMS API routes."""
     app = web.Application()
 
-    # Store dependencies in app
-    app['message_queue'] = message_queue
-    app['settings'] = settings
-
     # Add routes
-    app.router.add_post('/sms/send', send_sms)
-    app.router.add_get('/sms/status/{message_id}', get_sms_status)
-    app.router.add_get('/health', health_check)
+    api_v1 = web.Application()
+
+    # Store dependencies in app
+    api_v1['message_queue'] = message_queue
+    api_v1['settings'] = settings
+
+    api_v1.router.add_post('/sms/send', send_sms)
+    api_v1.router.add_get('/sms/status/{message_id}', get_sms_status)
+    api_v1.router.add_get('/health', health_check)
+
+    app.add_subapp('/api/v1', api_v1)
 
     return app
 
