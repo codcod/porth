@@ -14,18 +14,19 @@ def create_http_app(message_queue: MessageQueue, settings: Settings) -> web.Appl
     """Create aiohttp application with SMS API routes."""
     app = web.Application()
 
+    # Store dependencies in app
+    app['message_queue'] = message_queue
+    app['settings'] = settings
+
     # Add routes
     api_v1 = web.Application()
-
-    # Store dependencies in app
-    api_v1['message_queue'] = message_queue
-    api_v1['settings'] = settings
+    api_v1['main_app'] = app  # Reference to main app for message queue access
 
     api_v1.router.add_post('/sms/send', send_sms)
     api_v1.router.add_get('/sms/status/{message_id}', get_sms_status)
-    api_v1.router.add_get('/health', health_check)
 
     app.add_subapp('/api/v1', api_v1)
+    app.router.add_get('/health', health_check)
 
     return app
 
@@ -41,7 +42,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             'from_number': data.get('from_number') or data.get('source_addr'),
             'to_number': data.get('to_number') or data.get('destination_addr'),
             'message': data.get('message') or data.get('message_text'),
-            'dlr_url': data.get('dlr_url')
+            'dlr_url': data.get('dlr_url'),
         }
 
         sms_request = SMSRequest(**normalized_data)
@@ -62,7 +63,9 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
         )
 
         # Add to message queue
-        message_queue = request.app['message_queue']
+        # message_queue = request.app['message_queue']
+        main_app = request.app['main_app']
+        message_queue = main_app['message_queue']
         await message_queue.put(message)
 
         # Return response
@@ -108,6 +111,7 @@ async def get_sms_status(request: web_request.Request) -> web_response.Response:
 
 async def health_check(request: web_request.Request) -> web_response.Response:
     """Health check endpoint."""
+
     message_queue = request.app['message_queue']
 
     health_data = {
