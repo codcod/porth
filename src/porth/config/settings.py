@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # Configuration and logging
     config_file: Optional[str] = None
-    log_level: str = "INFO"
+    log_level: str = 'INFO'
     debug: bool = False
 
     @classmethod

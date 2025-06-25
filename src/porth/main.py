@@ -58,21 +58,21 @@ class SMSGateway:
 
     async def stop(self):
         """Stop all gateway components."""
-        logging.info("Stopping SMS Gateway...")
+        logging.info('Stopping SMS Gateway...')
 
         # Stop SMPP clients
         for client in self.smpp_clients:
             try:
                 await client.disconnect()
             except Exception as e:
-                logging.error(f"Error stopping SMPP client: {e}")
+                logging.error(f'Error stopping SMPP client: {e}')
 
         # Stop SMPP servers
         for server in self.smpp_servers:
             try:
                 await server.stop()
             except Exception as e:
-                logging.error(f"Error stopping SMPP server: {e}")
+                logging.error(f'Error stopping SMPP server: {e}')
 
         # Stop HTTP servers
         for runner in self.servers:
@@ -80,13 +80,13 @@ class SMSGateway:
                 if runner._server is not None:  # Check if server exists before cleanup
                     await runner.cleanup()
             except Exception as e:
-                logging.error(f"Error stopping HTTP server: {e}")
+                logging.error(f'Error stopping HTTP server: {e}')
 
         # Stop delivery engine
         try:
             await self.delivery_engine.stop()
         except Exception as e:
-            logging.error(f"Error stopping delivery engine: {e}")
+            logging.error(f'Error stopping delivery engine: {e}')
 
         logging.info('SMS Gateway stopped')
 
@@ -108,7 +108,7 @@ async def main():
 
     # Setup signal handlers for graceful shutdown
     def signal_handler(signum, frame):
-        logging.info(f"Received signal {signum}, initiating shutdown...")
+        logging.info(f'Received signal {signum}, initiating shutdown...')
         shutdown_event.set()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -116,13 +116,13 @@ async def main():
 
     try:
         await gateway.start()
-        logging.info("Porth SMS Gateway is running. Press Ctrl+C to stop.")
+        logging.info('Porth SMS Gateway is running. Press Ctrl+C to stop.')
         # Wait for shutdown signal
         await shutdown_event.wait()
     except KeyboardInterrupt:
-        logging.info("Received KeyboardInterrupt, shutting down...")
+        logging.info('Received KeyboardInterrupt, shutting down...')
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logging.error(f'Unexpected error: {e}')
     finally:
         await gateway.stop()
 
