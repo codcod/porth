@@ -274,23 +274,5 @@
     "seen": 1790065832.749046,
     "ast_hash": "b4ad4ffe96f1990e3f9cc662fb2b3b83",
     "semantic_hash": "b4ad4ffe96f1990e3f9cc662fb2b3b83"
-  },
-  "CHANGELOG.md": {
-    "mtime": 1790068113.7099903,
-    "seen": 1790070113.632652,
-    "ast_hash": "15f1dd0059e71f10f8d0ddb2822ede28",
-    "semantic_hash": ""
-  },
-  "PACKAGING.md": {
-    "mtime": 1790068113.6636844,
-    "seen": 1790070113.632653,
-    "ast_hash": "0a5e0ceb17f2821c0cdc395a513ed558",
-    "semantic_hash": ""
-  },
-  "RELEASING.md": {
-    "mtime": 1790068113.6908603,
-    "seen": 1790070113.6326551,
-    "ast_hash": "72a46aae5f1b6172d94d2f880f57d738",
-    "semantic_hash": ""
   }
 }
