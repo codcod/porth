@@ -104,10 +104,3 @@ delivery:
 - **Delivery Engine**: Intelligent routing, retry logic, and delivery management
 - **DLR Processing**: Comprehensive delivery receipt handling and correlation
 
-## License
-
-[License information]
-
-## Contributing
-
-[Contributing guidelines]

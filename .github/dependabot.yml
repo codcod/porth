@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Python dependencies (managed with uv; reads pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      prefix-development: "chore"
+      include: "scope"
+    reviewers:
+      - "codcod"
+    labels:
+      - "dependencies"
+      - "python"

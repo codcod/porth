@@ -1,70 +1,35 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled
 __pycache__/
 *.py[cod]
-*$py.class
 
-# Virtual environments
+# uv-managed virtualenv
 .venv/
-env/
-venv/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-
-# Pytest cache
+# Test/type/lint caches
 .pytest_cache/
-
-# mypy
 .mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Ruff
 .ruff_cache/
 
-# VS Code
-.vscode/
-
-# macOS
-.DS_Store
-
-# Environment files
-.env
-.env.*
-
-# UV
-uv.lock
+# Coverage
+.coverage
+htmlcov/
 
 # Build artifacts
 build/
 dist/
 *.egg-info/
-.eggs/
 
-# YAML config overrides (optional, if you have local-only config)
-config/*.local.yml
+# Environment files (Makefile's create-env/config-dev/config-test write these)
+.env
+.env.*
 
-# Logs
-*.log
+# macOS
+.DS_Store
 
-# Docker
-*.pid
-
-# Ignore secrets (if any)
-secrets.*
-
-# Some docs
-docs/prompt-engineering/
+# graphify - graph.json/GRAPH_REPORT.md/manifest.json are versioned (merge
+# driver + post-commit hook keep them in sync); ignore only local/regenerable bits
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/cache/
+graphify-out/cost.json
+graphify-out/graph.html
