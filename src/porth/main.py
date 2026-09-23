@@ -51,7 +51,12 @@ class SMSGateway:
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
             smpp_client = SMPPClient(client_config, self.delivery_engine)
-            await smpp_client.connect()
+            self.delivery_engine.smpp_client = smpp_client
+            try:
+                await smpp_client.connect()
+            except Exception as e:
+                # The first send retries the bind (lazy reconnect).
+                logging.error(f'SMPP client bind failed at startup: {e}')
             self.smpp_clients.append(smpp_client)
 
         logging.info('SMS Gateway started successfully')
