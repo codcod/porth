@@ -161,3 +161,21 @@ async def test_unbind_from_smsc_rebinds_on_next_send(smpp):
 async def test_startup_connect_racing_a_send_opens_one_bind(smpp):
     await asyncio.gather(smpp.connect(), smpp.send_message(msg('a')))
     assert len(FakeSmppai.instances) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_bind_is_closed(smpp, monkeypatch):
+    bind_started = asyncio.Event()
+
+    async def slow_bind(self):
+        bind_started.set()
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(FakeSmppai, 'bind_transceiver', slow_bind)
+    send = asyncio.create_task(smpp.send_message(msg('hi')))
+    await bind_started.wait()
+    send.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send
+    assert FakeSmppai.instances[0].disconnected
+    assert smpp.client is None

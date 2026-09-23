@@ -68,8 +68,10 @@ class SMPPClient(ProtocolHandler):
             try:
                 await client.connect()
                 await client.bind_transceiver()
-            except Exception as e:
-                logger.error(f'Failed to connect SMPP client: {e}')
+            except (
+                BaseException
+            ) as e:  # incl. CancelledError: never abandon a half-open bind
+                logger.error(f'Failed to connect SMPP client: {e!r}')
                 await self._close(client)
                 raise
 
