@@ -3,11 +3,13 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from porth.core.message import SMSMessage, MessageStatus
 from porth.core.queue import MessageQueue
+from porth.core.exceptions import DeliveryError, MessageError
 from porth.config.settings import Settings
+from porth.protocols.base import ProtocolHandler
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class DeliveryEngine:
         self.workers: List[asyncio.Task] = []
         self.running = False
         self.retry_queue: asyncio.Queue[SMSMessage] = asyncio.Queue()
+        self.smpp_client: Optional[ProtocolHandler] = None
 
     async def start(self) -> None:
         """Start the delivery engine workers."""
@@ -111,30 +114,24 @@ class DeliveryEngine:
         try:
             logger.info(f'Processing message {message.message_id}')
 
-            # Update message status
+            if self.smpp_client is None:
+                raise DeliveryError('no SMPP client configured')
+
+            result = await self.smpp_client.send_message(message)
+
             message.status = MessageStatus.SENT
             message.sent_at = datetime.utcnow()
+            message.protocol_data['smsc_message_id'] = result['smsc_message_id']
 
-            # TODO: Implement actual message delivery based on protocol
-            # This is where we would route to SMPP client, HTTP client, etc.
+            logger.info(f'Message {message.message_id} sent')
 
-            # Simulate delivery (replace with actual delivery logic)
-            await self._simulate_delivery(message)
-
-            logger.info(f'Message {message.message_id} delivered successfully')
+        except MessageError as e:
+            logger.error(f'Message {message.message_id} rejected permanently: {e}')
+            message.status = MessageStatus.FAILED
 
         except Exception as e:
             logger.error(f'Failed to deliver message {message.message_id}: {e}')
             await self._handle_delivery_failure(message, str(e))
-
-    async def _simulate_delivery(self, message: SMSMessage) -> None:
-        """Simulate message delivery (replace with actual delivery logic)."""
-        # Simulate network delay
-        await asyncio.sleep(0.1)
-
-        # Simulate successful delivery
-        message.status = MessageStatus.DELIVERED
-        message.delivered_at = datetime.utcnow()
 
     async def _handle_delivery_failure(self, message: SMSMessage, error: str) -> None:
         """Handle delivery failure and retry logic."""

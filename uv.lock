@@ -1385,8 +1385,8 @@ wheels = [
 
 [[package]]
 name = "smppai"
-version = "0.2.1"
-source = { git = "https://github.com/codcod/smppai.git#ac212cd88f0660fddaba55eccca1a35c1a4efaf8" }
+version = "0.2.8"
+source = { git = "https://github.com/codcod/smppai.git#1cdee3b2054302ee6fd6c889039652666a3cb7d8" }
 dependencies = [
     { name = "typing-extensions" },
 ]

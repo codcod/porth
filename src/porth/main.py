@@ -51,7 +51,12 @@ class SMSGateway:
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
             smpp_client = SMPPClient(client_config, self.delivery_engine)
-            await smpp_client.connect()
+            self.delivery_engine.smpp_client = smpp_client
+            try:
+                await smpp_client.connect()
+            except Exception as e:
+                # The first send retries the bind (lazy reconnect).
+                logging.error(f'SMPP client bind failed at startup: {e}')
             self.smpp_clients.append(smpp_client)
 
         logging.info('SMS Gateway started successfully')
@@ -59,6 +64,12 @@ class SMSGateway:
     async def stop(self):
         """Stop all gateway components."""
         logging.info('Stopping SMS Gateway...')
+
+        # Stop delivery engine first, so no worker lazily rebinds a stopped client
+        try:
+            await self.delivery_engine.stop()
+        except Exception as e:
+            logging.error(f'Error stopping delivery engine: {e}')
 
         # Stop SMPP clients
         for client in self.smpp_clients:
@@ -81,12 +92,6 @@ class SMSGateway:
                     await runner.cleanup()
             except Exception as e:
                 logging.error(f'Error stopping HTTP server: {e}')
-
-        # Stop delivery engine
-        try:
-            await self.delivery_engine.stop()
-        except Exception as e:
-            logging.error(f'Error stopping delivery engine: {e}')
 
         logging.info('SMS Gateway stopped')
 
