@@ -35,8 +35,12 @@ class SMPPClient(ProtocolHandler):
         self.config = config
         self.delivery_engine = delivery_engine
         self.client = None  # smppai client instance
-        self.connected = False
         self._connect_lock = asyncio.Lock()
+
+    @property
+    def connected(self) -> bool:
+        """True while the smppai client is bound (smppai clears it on unbind or lost connection)."""
+        return self.client is not None and self.client.is_bound
 
     async def start(self) -> None:
         """Start the SMPP client (alias for connect)."""
@@ -47,30 +51,36 @@ class SMPPClient(ProtocolHandler):
         await self.disconnect()
 
     async def connect(self) -> None:
-        """Connect to SMSC with a fresh transceiver bind. Raises on failure."""
-        client = SmppaiClient(
-            host=self.config.host,
-            port=self.config.port,
-            system_id=self.config.system_id,
-            password=self.config.password,
-            system_type=self.config.system_type,
-        )
-        client.on_connection_lost = self._on_connection_lost
-        try:
-            await client.connect()
-            await client.bind_transceiver()
-        except Exception as e:
-            logger.error(f'Failed to connect SMPP client: {e}')
-            await self._close(client)
-            raise
+        """Bind a fresh transceiver unless already bound. Raises on failure."""
+        async with self._connect_lock:
+            if self.connected:
+                return
+            # A client left over from an unbind or lost connection is dead; close it.
+            await self._close(self.client)
+            self.client = None
+            client = SmppaiClient(
+                host=self.config.host,
+                port=self.config.port,
+                system_id=self.config.system_id,
+                password=self.config.password,
+                system_type=self.config.system_type,
+            )
+            try:
+                await client.connect()
+                await client.bind_transceiver()
+            except Exception as e:
+                logger.error(f'Failed to connect SMPP client: {e}')
+                await self._close(client)
+                raise
 
-        self.client = client
-        self.connected = True
-        logger.info(f'SMPP client connected to {self.config.host}:{self.config.port}')
+            self.client = client
+            logger.info(
+                f'SMPP client connected to {self.config.host}:{self.config.port}'
+            )
 
     async def disconnect(self) -> None:
         """Disconnect from SMSC."""
-        client, self.client, self.connected = self.client, None, False
+        client, self.client = self.client, None
         await self._close(client)
         logger.info('SMPP client disconnected')
 
@@ -78,10 +88,8 @@ class SMPPClient(ProtocolHandler):
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
         data_coding = choose_data_coding(message.message_text)
 
-        async with self._connect_lock:
-            if not self.connected:
-                await self.connect()
-            client = self.client
+        await self.connect()
+        client = self.client
 
         try:
             smsc_message_id = await client.submit_sm(
@@ -93,9 +101,11 @@ class SMPPClient(ProtocolHandler):
             )
         except Exception as e:
             logger.error(f'Failed to send message via SMPP: {e}')
-            # Drop only the bind that failed; another worker may already have rebound.
-            if self.client is client:
-                self.client, self.connected = None, False
+            # An SMSC response with an error command_status came over a healthy bind;
+            # anything else (timeout, I/O, not bound) drops it. Drop only the bind that
+            # failed; another worker may already have rebound.
+            if getattr(e, 'command_status', None) is None and self.client is client:
+                self.client = None
                 await self._close(client)
             raise
 
@@ -105,11 +115,6 @@ class SMPPClient(ProtocolHandler):
             'status': 'submitted',
             'smsc_message_id': smsc_message_id,
         }
-
-    def _on_connection_lost(self, client: Any, error: Any) -> None:
-        if self.client is client:
-            self.connected = False
-        logger.warning(f'SMPP connection lost: {error}')
 
     @staticmethod
     async def _close(client: Any) -> None:

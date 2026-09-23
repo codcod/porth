@@ -65,6 +65,12 @@ class SMSGateway:
         """Stop all gateway components."""
         logging.info('Stopping SMS Gateway...')
 
+        # Stop delivery engine first, so no worker lazily rebinds a stopped client
+        try:
+            await self.delivery_engine.stop()
+        except Exception as e:
+            logging.error(f'Error stopping delivery engine: {e}')
+
         # Stop SMPP clients
         for client in self.smpp_clients:
             try:
@@ -86,12 +92,6 @@ class SMSGateway:
                     await runner.cleanup()
             except Exception as e:
                 logging.error(f'Error stopping HTTP server: {e}')
-
-        # Stop delivery engine
-        try:
-            await self.delivery_engine.stop()
-        except Exception as e:
-            logging.error(f'Error stopping delivery engine: {e}')
 
         logging.info('SMS Gateway stopped')
 

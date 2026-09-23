@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from smpp.exceptions import SMPPMessageException
+
 from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
 from porth.core.message import SMSMessage
@@ -14,7 +16,7 @@ from porth.protocols.smpp.client import SMPPClient
 class FakeSmppai:
     instances: list = []
     fail_connect = False
-    fail_submit = False
+    submit_error: Exception | None = None
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -31,12 +33,16 @@ class FakeSmppai:
     async def bind_transceiver(self):
         self.bound = True
 
+    @property
+    def is_bound(self):
+        return self.bound and not self.disconnected
+
     async def disconnect(self):
         self.disconnected = True
 
     async def submit_sm(self, **kwargs):
-        if FakeSmppai.fail_submit:
-            raise RuntimeError('boom')
+        if FakeSmppai.submit_error:
+            raise FakeSmppai.submit_error
         self.submits.append(kwargs)
         return 'smsc-42'
 
@@ -45,7 +51,7 @@ class FakeSmppai:
 def smpp(monkeypatch):
     FakeSmppai.instances = []
     FakeSmppai.fail_connect = False
-    FakeSmppai.fail_submit = False
+    FakeSmppai.submit_error = None
     monkeypatch.setattr(client_module, 'SmppaiClient', FakeSmppai)
     config = SMPPClientConfig(host='h', port=1, system_id='s', password='p')
     return SMPPClient(config, delivery_engine=None)
@@ -98,13 +104,13 @@ async def test_too_long_raises_before_network(smpp, text):
 async def test_failed_submit_drops_bind_and_next_send_rebinds(smpp):
     await smpp.connect()
     first = FakeSmppai.instances[0]
-    FakeSmppai.fail_submit = True
+    FakeSmppai.submit_error = RuntimeError('boom')
     with pytest.raises(RuntimeError):
         await smpp.send_message(msg('hi'))
     assert smpp.connected is False
     assert first.disconnected
 
-    FakeSmppai.fail_submit = False
+    FakeSmppai.submit_error = None
     await smpp.send_message(msg('hi'))
     assert len(FakeSmppai.instances) == 2
     assert FakeSmppai.instances[1].submits
@@ -128,3 +134,30 @@ async def test_concurrent_sends_open_one_bind(smpp):
     await asyncio.gather(smpp.send_message(msg('a')), smpp.send_message(msg('b')))
     assert len(FakeSmppai.instances) == 1
     assert len(FakeSmppai.instances[0].submits) == 2
+
+
+@pytest.mark.asyncio
+async def test_smsc_rejection_keeps_the_bind(smpp):
+    await smpp.connect()
+    FakeSmppai.submit_error = SMPPMessageException('rejected', command_status=0x0B)
+    with pytest.raises(SMPPMessageException):
+        await smpp.send_message(msg('hi'))
+    assert smpp.connected
+    assert not FakeSmppai.instances[0].disconnected
+
+
+@pytest.mark.asyncio
+async def test_unbind_from_smsc_rebinds_on_next_send(smpp):
+    await smpp.connect()
+    first = FakeSmppai.instances[0]
+    first.bound = False  # smppai clears _bound on an SMSC unbind or lost connection
+    await smpp.send_message(msg('hi'))
+    assert first.disconnected
+    assert len(FakeSmppai.instances) == 2
+    assert FakeSmppai.instances[1].submits
+
+
+@pytest.mark.asyncio
+async def test_startup_connect_racing_a_send_opens_one_bind(smpp):
+    await asyncio.gather(smpp.connect(), smpp.send_message(msg('a')))
+    assert len(FakeSmppai.instances) == 1
