@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-e2e test-coverage lint format check run dev-run config-check deps-update deps-lock build docker-build docker-run logs
+.PHONY: help install dev-install clean test test-unit test-integration test-e2e test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build docker-build docker-run logs
 
 # Default target
 .DEFAULT_GOAL := help
@@ -158,6 +158,13 @@ shell: ## Start Python shell with project context
 build: clean ## Build the package
 	@echo "Building package..."
 	$(UV) build
+
+# Documentation
+docs-check: ## Validate the AsciiDoc user manual (broken includes/xrefs fail)
+	snowball check
+
+docs-build: ## Render the user manual to PDF + EPUB into dist/docs/
+	snowball build -o dist/docs
 
 # Docker (optional - for future use)
 docker-build: ## Build Docker image

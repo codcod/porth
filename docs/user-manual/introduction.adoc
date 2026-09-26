@@ -1,0 +1,64 @@
+= Introduction
+
+{product} is an async SMS gateway written in Python. Clients submit messages over HTTP.
+{product} queues them in-process and delivers them over SMPP to one upstream SMSC, with
+{product} acting as an ESME client.
+
+== Scope
+
+The minimum viable product covers:
+
+* SMS submission over a plain HTTP/REST API and a Kannel-compatible `sendsms` API.
+* Delivery to one upstream SMSC over a single SMPP transceiver bind.
+* An in-process queue with retries on delivery failure.
+* Delivery receipts (DLRs) correlated back to the submitting client: a status the HTTP client
+  polls, or a callback to a Kannel client's `dlr-url`.
+* Unicode (UCS-2) and concatenated (multi-part) SMS.
+
+Some of this is not available yet in this release. <<Limitations>> lists what is missing.
+
+{product} deliberately does **not** provide the following. These are scope decisions, not
+oversights:
+
+* Authentication on any ingress API.
+* TLS on any transport.
+* Message persistence across restarts: the queue and message state live in memory.
+* Accepting inbound SMPP binds (an SMSC role).
+* Rate limiting, metrics export, tracing, and hot-reloadable configuration.
+
+Run {product} only on a trusted network.
+
+== Architecture
+
+{product} is a single process with no external services: no database, broker or cache.
+
+[mermaid]
+....
+flowchart TB
+    subgraph Ingress
+        HTTP_API["HTTP/REST API"]
+        Kannel_API["Kannel-compatible API"]
+    end
+    subgraph Core
+        Queue["Message queue (in-process)"]
+        Delivery["Delivery engine (retry)"]
+        Store["Message status (in-process)"]
+        DLR["DLR handler"]
+    end
+    subgraph Egress
+        SMPP_Client["SMPP client (one bind to the SMSC)"]
+    end
+    KannelTarget["Kannel client's dlr-url"]
+    HTTP_API -->|submit| Queue
+    Kannel_API -->|submit| Queue
+    Queue --> Delivery
+    Delivery -->|submit_sm| SMPP_Client
+    Delivery -->|status| Store
+    SMPP_Client -->|deliver_sm receipt| DLR
+    DLR -->|status| Store
+    DLR -->|POST| KannelTarget
+    HTTP_API -->|poll status| Store
+....
+
+SMPP is only an egress protocol: {product} sends `submit_sm` to the SMSC and receives
+`deliver_sm` receipts on the same bind. It never accepts `submit_sm` from anyone else.

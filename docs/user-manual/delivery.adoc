@@ -1,0 +1,46 @@
+= Message delivery
+
+== Lifecycle
+
+. The API validates the request, builds a message, and queues it.
+. A delivery worker takes the message and sends it to the SMSC as one `submit_sm`.
+. When the SMSC accepts it, the message becomes `sent`, and {product} records the SMSC's
+  message id for receipt correlation.
+. If the send fails, the message waits `delivery.retry_delay` seconds and is queued again.
+  After `delivery.max_retries` attempts in total it ends `failed`.
+. Some failures are permanent: text that does not fit one SMS ends `failed` at once, with no
+  retry.
+
+A message becomes `delivered` only from a delivery receipt. That path is not available yet,
+see <<Limitations>>.
+
+== Encoding and length
+
+{product} picks the SMPP `data_coding` for each message:
+
+* **GSM 03.38 (`data_coding` 0)** when every character is in the GSM 7-bit alphabet or its
+  extension table. The limit is 160 octets, and extension characters such as `€`, `[`, `]`,
+  `{`, `}`, `~` and the backslash take two.
+* **UCS-2 (`data_coding` 8)** otherwise. The limit is 140 octets: 70 characters, and a
+  character outside the Basic Multilingual Plane, such as most emoji, takes two.
+
+Longer text is rejected as `failed`. Concatenated SMS are not sent yet.
+
+== The SMSC bind
+
+{product} opens one transceiver bind to the configured SMSC.
+
+* If the bind fails at startup, the gateway still starts. The next send retries the bind.
+* When a send fails at the transport level (timeout, lost connection, not bound), {product}
+  drops the bind and the next send opens a new one. No background task reconnects.
+* An error *response* from the SMSC, such as an invalid destination or throttling, keeps the
+  bind open. That message goes through the normal retry path.
+* A send that times out is retried, even though the SMSC may already have accepted it. The
+  recipient can then get the message twice.
+
+== Delivery receipts
+
+{product} asks the SMSC for a receipt (`registered_delivery = 1`) for messages that request
+one. That is every Kannel-origin message, and each HTTP message submitted with `dlr_url`.
+In this release, received `deliver_sm` receipts are acknowledged and discarded. Message status
+does not change after `sent`.

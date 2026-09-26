@@ -1,0 +1,75 @@
+= Configuration
+
+{product} reads its settings in one of two ways:
+
+Environment variables:: Every setting has a `PORTH_` variable. Nested keys join with `__`,
+and lists are JSON. A `.env` file in the working directory is read too.
+A YAML file:: Set `PORTH_CONFIG_FILE` to its path. The repository ships
+`config/development.yml`, `config/production.yml` and `config/test.yml`.
+
+[WARNING]
+====
+When a YAML file is used, every key it sets wins over the environment. A
+`PORTH_HTTP__PORT` variable is ignored if the file sets `http.port`, and still applies if it
+does not. A list, such as `smpp.clients`, is taken whole from the file.
+
+YAML values are not expanded: `host: "${SMSC_HOST}"` sends the literal text `${SMSC_HOST}`.
+`config/production.yml` uses that form, so it does not work as shipped. Use environment
+variables for secrets instead.
+====
+
+== Settings
+
+[cols="2,1,4",options="header"]
+|===
+| Setting | Default | Meaning
+
+| `http.host` | `0.0.0.0` | Address the HTTP API listens on.
+| `http.port` | `8080` | Port the HTTP API listens on.
+| `smpp.clients` | `[]` | The upstream SMSC bind. Configure **exactly one** entry:
+`host`, `port` (default `2775`), `system_id`, `password`, `system_type` (default empty).
+With several entries, only the last one is used. With none, every message ends `failed`.
+| `delivery.max_retries` | `3` | Total delivery attempts per message, including the first.
+| `delivery.retry_delay` | `5` | Seconds to wait before each retry.
+| `delivery.worker_count` | `10` | Concurrent delivery workers.
+|===
+
+`smpp.servers` also exists, but {product} has no SMSC role. An entry there opens no port.
+Leave it empty.
+
+`log_level` and `debug` are accepted but have no effect: {product} logs at `INFO`.
+
+== Example
+
+`make dev` writes a `.env` that sets `PORTH_CONFIG_FILE=config/development.yml`, so `make run`
+then reads that file too, and its `clients: []` wins over `PORTH_SMPP__CLIENTS`. Remove that
+line from `.env` to configure {product} through the environment alone.
+
+.Environment variables
+[source,bash]
+----
+export PORTH_HTTP__PORT=8080
+export PORTH_SMPP__CLIENTS='[{"host": "smsc.example.com", "system_id": "porth", "password": "secret"}]'
+export PORTH_DELIVERY__MAX_RETRIES=5
+make run
+----
+
+.YAML file
+[source,yaml]
+----
+http:
+  host: "127.0.0.1"
+  port: 8080
+
+smpp:
+  clients:
+    - host: "smsc.example.com"
+      port: 2775
+      system_id: "porth"
+      password: "secret"
+
+delivery:
+  max_retries: 3
+  retry_delay: 5
+  worker_count: 10
+----

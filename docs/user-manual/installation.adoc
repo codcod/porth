@@ -1,0 +1,40 @@
+= Installation and running
+
+== Requirements
+
+* Python 3.11 or later (development uses 3.13, pinned in `.python-version`).
+* https://github.com/astral-sh/uv[uv].
+* Network access from {product} to the upstream SMSC's SMPP port.
+
+{product} installs its SMPP library, `smppai`, from its Git repository. The library is
+imported as `smpp`.
+
+== Install
+
+[source,bash]
+----
+git clone git@github.com:codcod/porth.git
+cd porth
+make dev        # uv sync --dev, and a .env pointing at config/development.yml
+----
+
+== Run
+
+[source,bash]
+----
+make run        # python -m porth.main; reads settings from PORTH_* variables and .env
+make dev-run    # same, with PORTH_CONFIG_FILE=config/development.yml
+----
+
+The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).
+It starts even when the SMSC is unreachable; the first send retries the bind.
+
+Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown stops the delivery workers, unbinds
+from the SMSC, and closes the HTTP listener. Messages still in the queue are lost.
+
+== Check that it is up
+
+[source,bash]
+----
+curl http://localhost:8080/health
+----

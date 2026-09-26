@@ -1,0 +1,48 @@
+= HTTP API
+
+The API has no authentication. See <<Introduction>>.
+
+== Send a message
+
+`POST /api/v1/sms/send` with a JSON body:
+
+[cols="2,1,4",options="header"]
+|===
+| Field | Required | Meaning
+
+| `source_addr` (or `from_number`) | yes | Sender address.
+| `destination_addr` (or `to_number`) | yes | Recipient address.
+| `message_text` (or `message`) | yes | Message text.
+| `dlr_url` | no | Accepted, but no callback is ever sent. Giving it makes {product}
+request a delivery receipt from the SMSC.
+|===
+
+[source,bash]
+----
+curl -X POST http://localhost:8080/api/v1/sms/send \
+  -H 'Content-Type: application/json' \
+  -d '{"source_addr": "+1234567890", "destination_addr": "+0987654321",
+       "message_text": "Hello from porth!"}'
+----
+
+A queued message returns `200`:
+
+[source,json]
+----
+{"message_id": "3f1c…", "status": "queued", "message": "Message queued for delivery"}
+----
+
+`200` means the message was queued, not sent. A missing field or a malformed body returns
+`400` with `{"error": …, "details": …}`.
+
+== Message status
+
+`GET /api/v1/sms/status/{message_id}`
+
+In this release the endpoint is a placeholder. It returns `status: pending` for any id,
+including unknown ones. See <<Limitations>>.
+
+== Health
+
+`GET /health` returns `200` with `status` and the current `queue_size` while the process is
+up. It does not check the SMSC bind.
