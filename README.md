@@ -1,32 +1,17 @@
 # Porth SMS Gateway
 
-A next-generation async Python SMS Gateway designed for high-performance, cloud-native telecommunications infrastructure.
+An async Python SMS Gateway designed for high-performance, cloud-native
+telecommunications infrastructure. Serves a Kannel-compatible `sendsms` API, so existing
+Kannel HTTP clients can switch to porth unmodified by changing only the host (port 13013).
 
-## Overview
-
-Porth is a modern, async-first SMS Gateway that provides reliable message delivery through multiple protocols including SMPP, HTTP/REST APIs, and Kannel compatibility. Built with Python 3.13+ and designed for production-scale telecom operations.
-
-## Key Features
-
-- **Async-First Architecture**: Built on asyncio for high concurrency and performance
-- **Multi-Protocol Support**: SMPP v3.4, HTTP/REST APIs, and Kannel-compatible endpoints
-- **Production Ready**: Message queuing, retry logic, delivery receipts (DLR), and comprehensive error handling
-- **Cloud Native**: Containerized deployment with Kubernetes support
-- **Unicode & Concatenated SMS**: Full support for international messaging and long messages
-- **Hot-Reloadable Configuration**: YAML-based configuration with runtime updates
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.13+
-- [uv](https://github.com/astral-sh/uv) package manager
+The user manual (`docs/`, built with `make docs-build`) is attached as PDF and EPUB to every
+GitHub release.
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone git@github.com:codcod/porth.git
 cd porth
 
 # Setup development environment
@@ -46,7 +31,7 @@ make run
 curl http://localhost:8080/health
 
 # Send SMS via REST API
-curl -X POST http://localhost:8080/api/v1/sms \
+curl -X POST http://localhost:8080/api/v1/sms/send \
   -H "Content-Type: application/json" \
   -d '{
     "source_addr": "+1234567890",
@@ -85,11 +70,6 @@ http:
   port: 8080
 
 smpp:
-  servers:
-    - host: "0.0.0.0"
-      port: 2775
-      system_id: "test"
-      password: "test"
   clients:
     - host: "smsc.example.com"
       port: 2775
@@ -108,11 +88,3 @@ it. If no client is configured, messages end `failed` after their retries. If th
 unreachable, the gateway still starts and the next send retries the bind. Text longer than
 one SMS (160 GSM-7 characters, where extension characters such as `€` count as two, or 70
 UCS-2 characters) is rejected as `failed` until concatenation lands (POR-006).
-
-## Architecture
-
-- **Protocol Handlers**: Modular SMPP, HTTP, and Kannel protocol support
-- **Message Queue**: Async message queuing with configurable backends
-- **Delivery Engine**: Intelligent routing, retry logic, and delivery management
-- **DLR Processing**: Comprehensive delivery receipt handling and correlation
-
