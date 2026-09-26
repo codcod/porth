@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rebinds (POR-001).
 - User manual (AsciiDoc, built with snowball), attached as PDF and EPUB to the GitHub release
   of every version tag (POR-007).
+- The Kannel-compatible `GET /cgi-bin/sendsms` endpoint, on its own port `kannel.port`
+  (default 13013, smsbox's default). `to` and `text` are required; `username` and
+  `password` are ignored (POR-008).
 
 **Changed**
 

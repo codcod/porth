@@ -33,7 +33,7 @@ def create_http_app(message_queue: MessageQueue, settings: Settings) -> web.Appl
     return app
 
 
-def text_field(data: dict[str, tp.Any], *names: str) -> str:
+def text_field(data: tp.Mapping[str, tp.Any], *names: str) -> str:
     """The first non-empty value among names (aliases), which must be a string."""
     for name in names:
         value = data.get(name)

@@ -26,6 +26,8 @@ variables for secrets instead.
 
 | `http.host` | `0.0.0.0` | Address the HTTP API listens on.
 | `http.port` | `8080` | Port the HTTP API listens on.
+| `kannel.host` | `0.0.0.0` | Address the Kannel-compatible API listens on.
+| `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `smpp.clients` | `[]` | The upstream SMSC bind. Configure **exactly one** entry:
 `host`, `port` (default `2775`), `system_id`, `password`, `system_type` (default empty).
 With several entries, only the last one is used. With none, every message ends `failed`.

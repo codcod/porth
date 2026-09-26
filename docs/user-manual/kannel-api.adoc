@@ -1,0 +1,39 @@
+= Kannel-compatible API
+
+{product} serves Kannel's `sendsms` interface on its own port, `kannel.port` (default `13013`,
+the smsbox default). An existing Kannel HTTP client switches to {product} by changing only
+the host it points at.
+
+== Send a message
+
+`GET /cgi-bin/sendsms` with query parameters:
+
+[cols="2,1,4",options="header"]
+|===
+| Parameter | Required | Meaning
+
+| `to` | yes | Recipient address.
+| `text` | yes | Message text.
+| `from` | no | Sender address.
+| `dlr-url` | no | Accepted, but no callback is ever sent.
+| `dlr-mask` | no | Accepted, but has no effect: {product} always requests a delivery
+receipt from the SMSC.
+| `username`, `password` | no | Accepted and ignored. The API has no authentication.
+|===
+
+Any other parameter is ignored. Any other method returns `405`. See <<Limitations>>.
+
+[source,bash]
+----
+curl 'http://localhost:13013/cgi-bin/sendsms?username=u&password=p&to=%2B306900000000&from=porth&text=Hello'
+----
+
+A queued message returns `200` with a `text/plain` body:
+
+----
+0: Accepted for delivery
+Message-ID: 3f1c…
+----
+
+`200` means the message was queued, not sent. A missing `to` or `text` returns `400` with
+`3: Failed to send SMS: <reason>`.
