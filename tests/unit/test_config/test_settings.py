@@ -90,3 +90,15 @@ def test_wrong_yaml_types_raise(tmp_path, yaml_text):
 def test_shipped_configs_load(tmp_path, name):
     env = {'PORTH_CONFIG_FILE': f'config/{name}.yml'}
     assert load_settings(env, dotenv=tmp_path / '.env').config_file
+
+
+def test_kannel_listener_defaults_and_env(tmp_path):
+    dotenv = tmp_path / '.env'
+    assert load_settings({}, dotenv=dotenv).kannel.port == 13013
+    assert (
+        load_settings({'PORTH_KANNEL__PORT': '13100'}, dotenv=dotenv).kannel.port
+        == 13100
+    )
+    # A host-only override keeps the Kannel default port, not the HTTP API's 8080
+    kannel = load_settings({'PORTH_KANNEL__HOST': '127.0.0.1'}, dotenv=dotenv).kannel
+    assert (kannel.host, kannel.port) == ('127.0.0.1', 13013)

@@ -7,7 +7,8 @@ The ticket reference identifies the planned change.
 |===
 | Area | Current behaviour | Planned
 
-| Kannel-compatible `sendsms` API | Not served. No route reaches the handler. | POR-008, POR-005
+| Kannel-compatible `sendsms` API | `GET` only. Parameters beyond `to`, `from`, `text`,
+`dlr-url` and `dlr-mask` are ignored. Response codes are not yet Kannel's exact table. | POR-005
 | Message status polling | `GET /api/v1/sms/status/{id}` always answers `pending`. | POR-009
 | Delivery receipts | Acknowledged and discarded. Status never becomes `delivered`, and no
 Kannel `dlr-url` callback is made. | POR-002

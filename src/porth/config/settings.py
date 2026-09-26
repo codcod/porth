@@ -16,6 +16,12 @@ class HTTPConfig:
 
 
 @dataclasses.dataclass(kw_only=True)
+class KannelConfig:
+    host: str = '0.0.0.0'
+    port: int = 13013  # smsbox's sendsms default
+
+
+@dataclasses.dataclass(kw_only=True)
 class SMPPClientConfig:
     host: str
     port: int = 2775
@@ -39,6 +45,7 @@ class DeliveryConfig:
 @dataclasses.dataclass(kw_only=True)
 class Settings:
     http: HTTPConfig = dataclasses.field(default_factory=HTTPConfig)
+    kannel: KannelConfig = dataclasses.field(default_factory=KannelConfig)
     smpp: SMPPConfig = dataclasses.field(default_factory=SMPPConfig)
     delivery: DeliveryConfig = dataclasses.field(default_factory=DeliveryConfig)
 

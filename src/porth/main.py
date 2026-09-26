@@ -6,10 +6,11 @@ import signal
 
 from aiohttp import web
 
-from porth.config.settings import Settings, load_settings
+from porth.config.settings import HTTPConfig, KannelConfig, Settings, load_settings
 from porth.core.delivery import DeliveryEngine
 from porth.core.queue import MessageQueue
 from porth.protocols.http.api import create_http_app
+from porth.protocols.kannel.api import create_kannel_app
 from porth.protocols.smpp.client import SMPPClient
 
 
@@ -28,16 +29,11 @@ class SMSGateway:
         # Start delivery engine
         await self.delivery_engine.start()
 
-        # Start HTTP API server
-        http_app = create_http_app(self.message_queue, self.settings)
-        http_runner = web.AppRunner(http_app)
-        await http_runner.setup()
-
-        http_site = web.TCPSite(
-            http_runner, self.settings.http.host, self.settings.http.port
+        # Start the HTTP API and the Kannel-compatible API, each on its own listener
+        await self._serve(
+            create_http_app(self.message_queue, self.settings), self.settings.http
         )
-        await http_site.start()
-        self.servers.append(http_runner)
+        await self._serve(create_kannel_app(self.message_queue), self.settings.kannel)
 
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
@@ -51,6 +47,12 @@ class SMSGateway:
             self.smpp_clients.append(smpp_client)
 
         logging.info('SMS Gateway started successfully')
+
+    async def _serve(self, app: web.Application, config: HTTPConfig | KannelConfig):
+        runner = web.AppRunner(app)
+        await runner.setup()
+        self.servers.append(runner)  # before the bind, so stop() cleans up a failed one
+        await web.TCPSite(runner, config.host, config.port).start()
 
     async def stop(self):
         """Stop all gateway components."""

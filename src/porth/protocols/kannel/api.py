@@ -5,8 +5,18 @@ import logging
 from aiohttp import web
 
 from porth.core.message import SMSMessage
+from porth.core.queue import MessageQueue
+from porth.protocols.http.api import text_field
 
 logger = logging.getLogger(__name__)
+
+
+def create_kannel_app(message_queue: MessageQueue) -> web.Application:
+    """Create the aiohttp application serving Kannel's GET /cgi-bin/sendsms."""
+    app = web.Application()
+    app['message_queue'] = message_queue
+    app.router.add_get('/cgi-bin/sendsms', kannel_send_sms, allow_head=False)
+    return app
 
 
 async def kannel_send_sms(request: web.Request) -> web.Response:
@@ -15,16 +25,18 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         # Parse query parameters (Kannel style)
         params = request.query
 
-        # Create internal message; username/password are never checked (design.md §2)
+        # Kannel separates several recipients with spaces; porth sends to one
+        recipients = text_field(params, 'to').split()
+        if len(recipients) != 1:
+            raise ValueError('to must be a single recipient')
+
+        # Create internal message; username/password are never read (design.md §2)
         message = SMSMessage(
-            source_addr=params.get('from', ''),
-            destination_addr=params.get('to', ''),
-            message_text=params.get('text', ''),
+            source_addr=text_field(params, 'from'),
+            destination_addr=recipients[0],
+            message_text=text_field(params, 'text'),
             protocol='kannel',
-            protocol_data={
-                'username': params.get('username', ''),
-                'dlr_mask': params.get('dlr-mask', '1'),
-            },
+            protocol_data={'dlr_mask': params.get('dlr-mask', '1')},
             dlr_url=params.get('dlr-url'),
         )
 
@@ -45,15 +57,3 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             content_type='text/plain',
             status=400,
         )
-
-
-async def kannel_status(request: web.Request) -> web.Response:
-    """Kannel-compatible status endpoint."""
-    message_queue = request.app['message_queue']
-
-    status_text = f"""Kannel bearerbox status
-Queue size: {message_queue.qsize()}
-Status: running
-"""
-
-    return web.Response(text=status_text, content_type='text/plain')

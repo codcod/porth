@@ -15,6 +15,8 @@ include::user-manual/configuration.adoc[leveloffset=+1]
 
 include::user-manual/http-api.adoc[leveloffset=+1]
 
+include::user-manual/kannel-api.adoc[leveloffset=+1]
+
 include::user-manual/delivery.adoc[leveloffset=+1]
 
 include::user-manual/limitations.adoc[leveloffset=+1]
