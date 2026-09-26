@@ -34,8 +34,8 @@ With several entries, only the last one is used. With none, every message ends `
 | `delivery.worker_count` | `10` | Concurrent delivery workers.
 |===
 
-`smpp.servers` also exists, but {product} has no SMSC role. An entry there opens no port.
-Leave it empty.
+An unknown key, in the YAML file or as a `PORTH_` variable, stops {product} at startup with
+an error naming it.
 
 `log_level` and `debug` are accepted but have no effect: {product} logs at `INFO`.
 

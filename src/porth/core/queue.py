@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+import typing as tp
 from porth.core.message import SMSMessage
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class MessageQueue:
             logger.error(f'Queue full, cannot add message {message.message_id}')
             raise
 
-    async def get(self, timeout: Optional[float] = None) -> SMSMessage:
+    async def get(self, timeout: tp.Optional[float] = None) -> SMSMessage:
         """Get a message from the queue."""
         try:
             message = await asyncio.wait_for(self._queue.get(), timeout=timeout)

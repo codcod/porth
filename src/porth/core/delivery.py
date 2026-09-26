@@ -2,14 +2,16 @@
 
 import asyncio
 import logging
+import typing as tp
 from datetime import datetime
-from typing import List, Dict, Any, Optional
 
-from porth.core.message import SMSMessage, MessageStatus
-from porth.core.queue import MessageQueue
-from porth.core.exceptions import DeliveryError, MessageError
 from porth.config.settings import Settings
-from porth.protocols.base import ProtocolHandler
+from porth.core.exceptions import DeliveryError, MessageError
+from porth.core.message import MessageStatus, SMSMessage
+from porth.core.queue import MessageQueue
+
+if tp.TYPE_CHECKING:
+    from porth.protocols.smpp.client import SMPPClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +22,10 @@ class DeliveryEngine:
     def __init__(self, message_queue: MessageQueue, settings: Settings):
         self.message_queue = message_queue
         self.settings = settings
-        self.workers: List[asyncio.Task] = []
+        self.workers: list[asyncio.Task] = []
         self.running = False
         self.retry_queue: asyncio.Queue[SMSMessage] = asyncio.Queue()
-        self.smpp_client: Optional[ProtocolHandler] = None
+        self.smpp_client: tp.Optional['SMPPClient'] = None
 
     async def start(self) -> None:
         """Start the delivery engine workers."""
@@ -148,9 +150,3 @@ class DeliveryEngine:
                 f'Message {message.message_id} failed permanently after {message.retry_count} retries'
             )
             message.status = MessageStatus.FAILED
-
-    async def send_delivery_receipt(self, receipt_data: Dict[str, Any]) -> None:
-        """Send delivery receipt to original client."""
-        # TODO: Implement DLR sending based on original protocol
-        logger.info(f'Sending delivery receipt: {receipt_data}')
-        pass

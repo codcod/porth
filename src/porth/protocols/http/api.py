@@ -1,11 +1,13 @@
 """HTTP/REST API implementation using aiohttp."""
 
 import logging
+import typing as tp
+
 from aiohttp import web, web_request, web_response
+
+from porth.config.settings import Settings
 from porth.core.message import SMSMessage
 from porth.core.queue import MessageQueue
-from porth.config.settings import Settings
-from porth.protocols.http.models import SMSRequest, SMSResponse, StatusResponse
 
 logger = logging.getLogger(__name__)
 
@@ -31,52 +33,57 @@ def create_http_app(message_queue: MessageQueue, settings: Settings) -> web.Appl
     return app
 
 
+def text_field(data: dict[str, tp.Any], *names: str) -> str:
+    """The first non-empty value among names (aliases), which must be a string."""
+    for name in names:
+        value = data.get(name)
+        if value:
+            if not isinstance(value, str):
+                raise ValueError(f'{name} must be a string')
+            return value
+    raise ValueError(f'{names[0]} is required')
+
+
 async def send_sms(request: web_request.Request) -> web_response.Response:
     """Send SMS message via HTTP API."""
     try:
-        # Parse request body
         data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError('request body must be a JSON object')
+
+        dlr_url = data.get('dlr_url') or None
+        if dlr_url is not None and not isinstance(dlr_url, str):
+            raise ValueError('dlr_url must be a string')
 
         # Support both field naming conventions
-        normalized_data = {
-            'from_number': data.get('from_number') or data.get('source_addr'),
-            'to_number': data.get('to_number') or data.get('destination_addr'),
-            'message': data.get('message') or data.get('message_text'),
-            'dlr_url': data.get('dlr_url'),
-        }
-
-        sms_request = SMSRequest(**normalized_data)
-
-        # Create internal message
         message = SMSMessage(
-            source_addr=sms_request.from_number,
-            destination_addr=sms_request.to_number,
-            message_text=sms_request.message,
+            source_addr=text_field(data, 'from_number', 'source_addr'),
+            destination_addr=text_field(data, 'to_number', 'destination_addr'),
+            message_text=text_field(data, 'message', 'message_text'),
             protocol='http',
             protocol_data={
                 'client_ip': request.remote,
                 'user_agent': request.headers.get('User-Agent', ''),
-                'dlr_url': sms_request.dlr_url,
+                'dlr_url': dlr_url,
             },
-            dlr_requested=sms_request.dlr_url is not None,
-            dlr_url=sms_request.dlr_url,
+            dlr_requested=dlr_url is not None,
+            dlr_url=dlr_url,
         )
 
         # Add to message queue
-        # message_queue = request.app['message_queue']
         main_app = request.app['main_app']
         message_queue = main_app['message_queue']
         await message_queue.put(message)
 
-        # Return response
-        response = SMSResponse(
-            message_id=message.message_id,
-            status='queued',
-            message='Message queued for delivery',
-        )
-
         logger.info(f'HTTP API: Queued message {message.message_id}')
-        return web.json_response(response.dict(), status=200)
+        return web.json_response(
+            {
+                'message_id': message.message_id,
+                'status': 'queued',
+                'message': 'Message queued for delivery',
+            },
+            status=200,
+        )
 
     except Exception as e:
         logger.error(f'Error sending SMS via HTTP API: {e}')
@@ -87,26 +94,20 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
 
 async def get_sms_status(request: web_request.Request) -> web_response.Response:
     """Get SMS message status."""
-    try:
-        message_id = request.match_info['message_id']
+    message_id = request.match_info['message_id']
 
-        # TODO: Implement message status lookup
-        # For now, return a placeholder response
-        response = StatusResponse(
-            message_id=message_id,
-            status='pending',
-            created_at='2024-01-01T00:00:00Z',
-            sent_at=None,
-            delivered_at=None,
-        )
-
-        return web.json_response(response.model_dump(), status=200)
-
-    except Exception as e:
-        logger.error(f'Error getting SMS status: {e}')
-        return web.json_response(
-            {'error': 'Failed to get status', 'details': str(e)}, status=400
-        )
+    # TODO: Implement message status lookup (POR-009)
+    # For now, return a placeholder response
+    return web.json_response(
+        {
+            'message_id': message_id,
+            'status': 'pending',
+            'created_at': '2024-01-01T00:00:00Z',
+            'sent_at': None,
+            'delivered_at': None,
+        },
+        status=200,
+    )
 
 
 async def health_check(request: web_request.Request) -> web_response.Response:

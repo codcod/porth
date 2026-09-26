@@ -3,15 +3,13 @@
 import asyncio
 import logging
 import signal
-from typing import List
 
 from aiohttp import web
 
-from porth.config.settings import Settings
-from porth.core.queue import MessageQueue
+from porth.config.settings import Settings, load_settings
 from porth.core.delivery import DeliveryEngine
+from porth.core.queue import MessageQueue
 from porth.protocols.http.api import create_http_app
-from porth.protocols.smpp.server import SMPPServer
 from porth.protocols.smpp.client import SMPPClient
 
 
@@ -22,9 +20,8 @@ class SMSGateway:
         self.settings = settings
         self.message_queue = MessageQueue()
         self.delivery_engine = DeliveryEngine(self.message_queue, settings)
-        self.servers: List[web.BaseRunner] = []
-        self.smpp_servers: List[SMPPServer] = []
-        self.smpp_clients: List[SMPPClient] = []
+        self.servers: list[web.BaseRunner] = []
+        self.smpp_clients: list[SMPPClient] = []
 
     async def start(self):
         """Start all gateway components."""
@@ -42,15 +39,9 @@ class SMSGateway:
         await http_site.start()
         self.servers.append(http_runner)
 
-        # Start SMPP servers (if configured)
-        for smpp_config in self.settings.smpp.servers:
-            smpp_server = SMPPServer(smpp_config, self.message_queue)
-            await smpp_server.start()
-            self.smpp_servers.append(smpp_server)
-
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
-            smpp_client = SMPPClient(client_config, self.delivery_engine)
+            smpp_client = SMPPClient(client_config)
             self.delivery_engine.smpp_client = smpp_client
             try:
                 await smpp_client.connect()
@@ -78,13 +69,6 @@ class SMSGateway:
             except Exception as e:
                 logging.error(f'Error stopping SMPP client: {e}')
 
-        # Stop SMPP servers
-        for server in self.smpp_servers:
-            try:
-                await server.stop()
-            except Exception as e:
-                logging.error(f'Error stopping SMPP server: {e}')
-
         # Stop HTTP servers
         for runner in self.servers:
             try:
@@ -101,14 +85,7 @@ async def main():
     # Setup logging
     logging.basicConfig(level=logging.INFO)
 
-    # Load initial settings to check for config file
-    settings = Settings()
-
-    # If a config file is specified, load settings from it
-    if settings.config_file:
-        settings = Settings.load_from_file(settings.config_file)
-
-    gateway = SMSGateway(settings)
+    gateway = SMSGateway(load_settings())
     shutdown_event = asyncio.Event()
 
     # Setup signal handlers for graceful shutdown

@@ -4,11 +4,6 @@ http:
   port: 8080
 
 smpp:
-  servers:
-    - host: "0.0.0.0"
-      port: 2775
-      system_id: "${SMPP_SYSTEM_ID}"
-      password: "${SMPP_PASSWORD}"
   clients:
     - host: "${SMSC_HOST}"
       port: 2775

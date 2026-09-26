@@ -54,7 +54,7 @@ def smpp(monkeypatch):
     FakeSmppai.submit_error = None
     monkeypatch.setattr(client_module, 'SmppaiClient', FakeSmppai)
     config = SMPPClientConfig(host='h', port=1, system_id='s', password='p')
-    return SMPPClient(config, delivery_engine=None)
+    return SMPPClient(config)
 
 
 def msg(text: str, dlr: bool = True) -> SMSMessage:
@@ -76,6 +76,17 @@ async def test_gsm_text_uses_default_coding(smpp):
     assert submit['short_message'] == 'Hello @ €'
     assert result['smsc_message_id'] == 'smsc-42'
     assert FakeSmppai.instances[0].bound
+
+
+@pytest.mark.asyncio
+async def test_addresses_carry_smppai_ton_npi(smpp):
+    message = msg('hi')
+    message.source_addr, message.destination_addr = 'ACME', '+48 600-100-200'
+    await smpp.send_message(message)
+    submit = FakeSmppai.instances[0].submits[0]
+    assert (submit['source_addr'], submit['source_addr_ton']) == ('ACME', 5)
+    assert submit['destination_addr'] == '48600100200'
+    assert (submit['dest_addr_ton'], submit['dest_addr_npi']) == (1, 1)
 
 
 @pytest.mark.asyncio

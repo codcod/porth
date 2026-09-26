@@ -4,7 +4,6 @@ http:
   port: 8081
 
 smpp:
-  servers: []
   clients: []
 
 delivery:
