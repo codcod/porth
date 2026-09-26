@@ -1,0 +1,55 @@
+# Build the AsciiDoc user manual with snowball and attach it to the GitHub release of every
+# version tag.
+#
+# Triggered by the tag push itself (RELEASING.md), not by `release: published`. A release
+# created by another workflow with GITHUB_TOKEN never fires `release` events, which is why
+# smppai's release-triggered manual build has never run. `workflow_dispatch` rebuilds the
+# manual for an existing tag.
+name: docs-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build the manual for, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  attach-manual:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # Full history, so snowball's `revision: git-describe` resolves the tag.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      # The release exists before the manual is built, so a broken manual build never holds
+      # back the release. It still fails this run, so the missing manual is visible.
+      - name: Ensure the GitHub release exists
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
+
+      # Ubuntu runners ship Homebrew but keep it off PATH (smppai PR #49), so put it there
+      # for later steps too. `brew update` first: a runner image's Homebrew snapshot can lag
+      # the tap's bottles.
+      - name: Install snowball
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          brew update --quiet
+          brew install codcod/tap/snowball
+          snowball setup
+
+      - name: Build user manual
+        run: snowball build -o dist/docs
+
+      - name: Attach user manual to release
+        run: gh release upload "$TAG" dist/docs/*.pdf dist/docs/*.epub --clobber

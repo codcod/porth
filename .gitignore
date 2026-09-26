@@ -19,6 +19,13 @@ build/
 dist/
 *.egg-info/
 
+# snowball output rendered next to the sources (make docs-build writes to dist/docs/)
+docs/*.pdf
+docs/*.epub
+# snowball check renders mermaid diagrams into the working directory
+.asciidoctor/
+diag-mermaid-*.png
+
 # Environment files (Makefile's create-env/config-dev/config-test write these)
 .env
 .env.*
