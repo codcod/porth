@@ -83,8 +83,8 @@ delivery:
 ```
 
 `smpp.clients` holds the single upstream SMSC bind. porth binds to it as a transceiver and
-sends every message there as a `submit_sm`. A message is marked `sent` once the SMSC accepts
-it. If no client is configured, messages end `failed` after their retries. If the SMSC is
-unreachable, the gateway still starts and the next send retries the bind. Text longer than
-one SMS (160 GSM-7 characters, where extension characters such as `€` count as two, or 70
-UCS-2 characters) is rejected as `failed` until concatenation lands (POR-006).
+sends every message there as one `submit_sm` per part. A message is marked `sent` once the
+SMSC accepts every part. If no client is configured, messages end `failed` after their
+retries. If the SMSC is unreachable, the gateway still starts and the next send retries the
+bind. Text longer than one SMS (160 GSM-7 characters, where extension characters such as `€`
+count as two, or 70 UCS-2 characters) is sent as a concatenated SMS of up to 255 parts.

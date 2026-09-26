@@ -130,7 +130,7 @@ class DeliveryEngine:
 
             message.status = MessageStatus.SENT
             message.sent_at = datetime.utcnow()
-            ids = [result['smsc_message_id']]
+            ids = result['smsc_message_ids']
             message.protocol_data['smsc_message_ids'] = ids
             self.message_store.add_smsc_ids(message, ids)
 
@@ -152,7 +152,6 @@ class DeliveryEngine:
             logger.info(
                 f'Scheduling retry {message.retry_count}/{self.settings.delivery.max_retries} for message {message.message_id}'
             )
-            message.status = MessageStatus.QUEUED
             await self.retry_queue.put(message)
         else:
             logger.error(

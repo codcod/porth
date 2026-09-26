@@ -17,7 +17,7 @@ class FakeHandler:
     async def send_message(self, message):
         if self.error:
             raise self.error
-        return {'smsc_message_id': 'smsc-7'}
+        return {'smsc_message_ids': ['smsc-7', 'smsc-8']}
 
 
 def make(handler=None):
@@ -26,7 +26,11 @@ def make(handler=None):
     )  # max_retries = 3
     engine.smpp_client = handler
     message = SMSMessage(
-        source_addr='A', destination_addr='B', message_text='hi', protocol='http'
+        source_addr='A',
+        destination_addr='B',
+        message_text='hi',
+        protocol='http',
+        status=MessageStatus.QUEUED,  # as taken off the queue
     )
     return engine, message
 
@@ -37,8 +41,9 @@ async def test_success_marks_sent_with_smsc_id():
     await engine._process_message(message)
     assert message.status == MessageStatus.SENT
     assert message.sent_at is not None
-    assert message.protocol_data['smsc_message_ids'] == ['smsc-7']
+    assert message.protocol_data['smsc_message_ids'] == ['smsc-7', 'smsc-8']
     assert engine.message_store.find_by_smsc_id('smsc-7') is message
+    assert engine.message_store.find_by_smsc_id('smsc-8') is message
 
 
 @pytest.mark.asyncio

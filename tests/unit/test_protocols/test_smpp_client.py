@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from smpp.exceptions import SMPPMessageException
+from smpp.gsm import make_parts
 
 from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
@@ -40,11 +41,19 @@ class FakeSmppai:
     async def disconnect(self):
         self.disconnected = True
 
-    async def submit_sm(self, **kwargs):
+    async def submit_multipart(self, source_addr, destination_addr, message, **kwargs):
         if FakeSmppai.submit_error:
             raise FakeSmppai.submit_error
-        self.submits.append(kwargs)
-        return 'smsc-42'
+        self.submits.append(
+            dict(
+                source_addr=source_addr,
+                destination_addr=destination_addr,
+                message=message,
+                **kwargs,
+            )
+        )
+        parts = make_parts(message, kwargs['data_coding'])
+        return [f'smsc-{42 + i}' for i in range(len(parts))]
 
 
 @pytest.fixture
@@ -73,8 +82,8 @@ async def test_gsm_text_uses_default_coding(smpp):
     submit = FakeSmppai.instances[0].submits[0]
     assert submit['data_coding'] == 0
     assert submit['registered_delivery'] == 1
-    assert submit['short_message'] == 'Hello @ €'
-    assert result['smsc_message_id'] == 'smsc-42'
+    assert submit['message'] == 'Hello @ €'
+    assert result['smsc_message_ids'] == ['smsc-42']
     assert FakeSmppai.instances[0].bound
 
 
@@ -105,10 +114,29 @@ async def test_one_segment_fits(smpp, text):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('text', ['a' * 161, 'Ж' * 71, '€' * 81])
-async def test_too_long_raises_before_network(smpp, text):
+async def test_long_text_is_sent_in_parts(smpp, text):
+    result = await smpp.send_message(msg(text))
+    assert result['smsc_message_ids'] == ['smsc-42', 'smsc-43']
+    assert FakeSmppai.instances[0].submits[0]['message'] == text
+
+
+@pytest.mark.asyncio
+async def test_more_than_255_parts_fails_before_network(smpp):
     with pytest.raises(MessageError):
-        await smpp.send_message(msg(text))
+        await smpp.send_message(msg('a' * (153 * 255 + 1)))
     assert FakeSmppai.instances == []
+
+
+@pytest.mark.asyncio
+async def test_failed_part_reraises_and_smsc_rejection_keeps_the_bind(smpp, caplog):
+    await smpp.connect()
+    error = SMPPMessageException('rejected', command_status=0x45)
+    error.sent_message_ids = ['smsc-1']
+    FakeSmppai.submit_error = error
+    with pytest.raises(SMPPMessageException):
+        await smpp.send_message(msg('a' * 400))
+    assert smpp.connected
+    assert "['smsc-1']" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,6 @@ The ticket reference identifies the planned change.
 Kannel `dlr-url` callback is made. | POR-002
 | Receipt timeout | A message with no receipt never becomes `expired`. | POR-003
 | Message records | Kept in memory until restart. Nothing is evicted. | POR-003
-| Long messages | Rejected as `failed` instead of being sent as concatenated SMS. | POR-006
 | Retries | A fixed delay with no backoff. Retries are processed one at a time. | POR-010
 | Configuration | YAML values are not expanded from the environment, and the environment
 cannot override a YAML file. `log_level` is ignored. | POR-012

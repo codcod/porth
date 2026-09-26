@@ -15,23 +15,19 @@ from porth.core.message import SMSMessage
 
 logger = logging.getLogger(__name__)
 
-TOO_LONG = 'message exceeds one SMS segment; concatenation not supported yet (POR-006)'
-
 
 def choose_data_coding(text: str) -> DataCoding:
     """
     GSM 03.38 if smppai's codec can carry text, else UCS2 (as smppai's Client.send
-    picks). Raise MessageError unless it fits one segment by smppai's segmentation.
+    picks). Raise MessageError if smppai's segmentation needs more than 255 parts.
     """
     for data_coding in (DataCoding.DEFAULT, DataCoding.UCS2):
         try:
-            parts = make_parts(text, data_coding)
+            make_parts(text, data_coding)
         except SMPPPDUException:
             continue  # not representable in this coding
-        except ValueError:  # more than 255 parts
-            raise MessageError(TOO_LONG)
-        if len(parts) > 1:
-            raise MessageError(TOO_LONG)
+        except ValueError:
+            raise MessageError('message needs more than 255 SMS parts')
         return data_coding
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
 
@@ -94,21 +90,28 @@ class SMPPClient:
         client = await self.connect()
 
         try:
-            smsc_message_id = await client.submit_sm(
-                source_addr=source.addr,
-                source_addr_ton=source.ton,
-                source_addr_npi=source.npi,
-                destination_addr=destination.addr,
-                dest_addr_ton=destination.ton,
-                dest_addr_npi=destination.npi,
-                short_message=message.message_text,
+            # smppai splits the text and sets the UDH per part; one SMSC id per part
+            smsc_message_ids = await client.submit_multipart(
+                source.addr,
+                destination.addr,
+                message.message_text,
                 data_coding=data_coding,
                 registered_delivery=RegisteredDelivery.SUCCESS_FAILURE
                 if message.dlr_requested
                 else RegisteredDelivery.NO_RECEIPT,
+                source_addr_ton=source.ton,
+                source_addr_npi=source.npi,
+                dest_addr_ton=destination.ton,
+                dest_addr_npi=destination.npi,
             )
         except Exception as e:
             logger.error(f'Failed to send message via SMPP: {e}')
+            # The whole message is retried; parts the SMSC already accepted are orphans
+            sent = getattr(e, 'sent_message_ids', [])
+            if sent:
+                logger.warning(
+                    f'Message {message.message_id}: parts already accepted as {sent}'
+                )
             # An SMSC response with an error command_status came over a healthy bind;
             # anything else (timeout, I/O, not bound) drops it. Drop only the bind that
             # failed; another worker may already have rebound.
@@ -124,7 +127,7 @@ class SMPPClient:
         return {
             'message_id': message.message_id,
             'status': 'submitted',
-            'smsc_message_id': smsc_message_id,
+            'smsc_message_ids': smsc_message_ids,
         }
 
     @staticmethod
