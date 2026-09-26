@@ -78,3 +78,12 @@ async def test_dlr_url_is_rejected(http):
     assert 'dlr_url is not supported' in (await resp.json())['details']
     assert queue.empty()
     assert store._messages == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('empty', [None, ''])
+async def test_empty_dlr_url_is_accepted(http, empty):
+    client, queue, _ = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'dlr_url': empty})
+    assert resp.status == 200
+    assert queue.qsize() == 1

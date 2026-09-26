@@ -58,7 +58,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
 
         # Status is polled, never pushed (design.md §4.2); a silently ignored
         # dlr_url would leave the client waiting for a callback that never comes
-        if 'dlr_url' in data:
+        if data.get('dlr_url'):
             raise ValueError(
                 'dlr_url is not supported; poll GET /api/v1/sms/status/{message_id}'
             )

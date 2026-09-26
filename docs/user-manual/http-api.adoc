@@ -16,7 +16,7 @@ The API has no authentication. See <<Introduction>>.
 |===
 
 There is no delivery callback. Poll the message's status instead (see <<Message status>>). A
-body that contains `dlr_url` is rejected with `400`.
+body with a non-empty `dlr_url` is rejected with `400`.
 
 [source,bash]
 ----

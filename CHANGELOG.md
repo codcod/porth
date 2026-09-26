@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - smppai is upgraded from 0.2.8 to 0.9.1 (POR-011).
 - Every message requests a delivery receipt (`registered_delivery = 1`), not only Kannel
   messages and HTTP messages with `dlr_url` (POR-009).
-- The HTTP API rejects a body that contains `dlr_url` with `400`. Status is polled, never
+- The HTTP API rejects a body with a non-empty `dlr_url` with `400`. Status is polled, never
   pushed. Before, `dlr_url` was accepted and no callback was ever sent (POR-009).
 
 **Removed**
