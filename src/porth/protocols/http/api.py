@@ -2,22 +2,27 @@
 
 import logging
 import typing as tp
+from datetime import datetime
 
 from aiohttp import web, web_request, web_response
 
 from porth.config.settings import Settings
 from porth.core.message import SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 
 logger = logging.getLogger(__name__)
 
 
-def create_http_app(message_queue: MessageQueue, settings: Settings) -> web.Application:
+def create_http_app(
+    message_queue: MessageQueue, message_store: MessageStore, settings: Settings
+) -> web.Application:
     """Create aiohttp application with SMS API routes."""
     app = web.Application()
 
     # Store dependencies in app
     app['message_queue'] = message_queue
+    app['message_store'] = message_store
     app['settings'] = settings
 
     # Add routes
@@ -51,9 +56,12 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
         if not isinstance(data, dict):
             raise ValueError('request body must be a JSON object')
 
-        dlr_url = data.get('dlr_url') or None
-        if dlr_url is not None and not isinstance(dlr_url, str):
-            raise ValueError('dlr_url must be a string')
+        # Status is polled, never pushed (design.md §4.2); a silently ignored
+        # dlr_url would leave the client waiting for a callback that never comes
+        if data.get('dlr_url'):
+            raise ValueError(
+                'dlr_url is not supported; poll GET /api/v1/sms/status/{message_id}'
+            )
 
         # Support both field naming conventions
         message = SMSMessage(
@@ -64,16 +72,13 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             protocol_data={
                 'client_ip': request.remote,
                 'user_agent': request.headers.get('User-Agent', ''),
-                'dlr_url': dlr_url,
             },
-            dlr_requested=dlr_url is not None,
-            dlr_url=dlr_url,
         )
 
-        # Add to message queue
+        # Store before queueing, so a poll right after the response finds it
         main_app = request.app['main_app']
-        message_queue = main_app['message_queue']
-        await message_queue.put(message)
+        main_app['message_store'].add(message)
+        await main_app['message_queue'].put(message)
 
         logger.info(f'HTTP API: Queued message {message.message_id}')
         return web.json_response(
@@ -95,19 +100,26 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
 async def get_sms_status(request: web_request.Request) -> web_response.Response:
     """Get SMS message status."""
     message_id = request.match_info['message_id']
-
-    # TODO: Implement message status lookup (POR-009)
-    # For now, return a placeholder response
+    message = request.app['main_app']['message_store'].get(message_id)
+    if message is None:
+        return web.json_response(
+            {'error': 'Message not found', 'details': message_id}, status=404
+        )
     return web.json_response(
         {
-            'message_id': message_id,
-            'status': 'pending',
-            'created_at': '2024-01-01T00:00:00Z',
-            'sent_at': None,
-            'delivered_at': None,
+            'message_id': message.message_id,
+            'status': message.status.value,
+            'created_at': _ts(message.created_at),
+            'sent_at': _ts(message.sent_at),
+            'delivered_at': _ts(message.delivered_at),
         },
         status=200,
     )
+
+
+def _ts(dt: tp.Optional[datetime]) -> tp.Optional[str]:
+    """Naive-UTC datetime as YYYY-MM-DDTHH:MM:SSZ, or None."""
+    return dt.strftime('%Y-%m-%dT%H:%M:%SZ') if dt else None
 
 
 async def health_check(request: web_request.Request) -> web_response.Response:

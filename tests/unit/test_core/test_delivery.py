@@ -7,6 +7,7 @@ from porth.core.delivery import DeliveryEngine
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 
 
 class FakeHandler:
@@ -20,7 +21,9 @@ class FakeHandler:
 
 
 def make(handler=None):
-    engine = DeliveryEngine(MessageQueue(), Settings())  # max_retries = 3
+    engine = DeliveryEngine(
+        MessageQueue(), MessageStore(), Settings()
+    )  # max_retries = 3
     engine.smpp_client = handler
     message = SMSMessage(
         source_addr='A', destination_addr='B', message_text='hi', protocol='http'
@@ -34,7 +37,8 @@ async def test_success_marks_sent_with_smsc_id():
     await engine._process_message(message)
     assert message.status == MessageStatus.SENT
     assert message.sent_at is not None
-    assert message.protocol_data['smsc_message_id'] == 'smsc-7'
+    assert message.protocol_data['smsc_message_ids'] == ['smsc-7']
+    assert engine.message_store.find_by_smsc_id('smsc-7') is message
 
 
 @pytest.mark.asyncio

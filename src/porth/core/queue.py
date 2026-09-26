@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import typing as tp
-from porth.core.message import SMSMessage
+from porth.core.message import MessageStatus, SMSMessage
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ class MessageQueue:
 
     async def put(self, message: SMSMessage) -> None:
         """Add a message to the queue."""
+        message.status = MessageStatus.QUEUED
         try:
             await self._queue.put(message)
             logger.debug(f'Message {message.message_id} added to queue')

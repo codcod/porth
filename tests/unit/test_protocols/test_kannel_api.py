@@ -5,14 +5,15 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 from porth.protocols.kannel.api import create_kannel_app
 
 
 @pytest_asyncio.fixture
 async def kannel():
-    queue = MessageQueue()
-    async with TestClient(TestServer(create_kannel_app(queue))) as client:
-        yield client, queue
+    app = create_kannel_app(MessageQueue(), MessageStore())
+    async with TestClient(TestServer(app)) as client:
+        yield client, app['message_queue']
 
 
 @pytest.mark.asyncio
@@ -29,9 +30,12 @@ async def test_sendsms_queues_the_message(kannel):
         },
     )
     assert resp.status == 200
-    assert (await resp.text()).startswith('0: Accepted for delivery')
+    text = await resp.text()
+    assert text.startswith('0: Accepted for delivery')
     assert queue.qsize() == 1
     message = await queue.get()
+    message_id = text.split('Message-ID: ')[1]
+    assert client.app['message_store'].get(message_id) is message
     assert message.protocol == 'kannel'
     assert message.destination_addr == '+306900000000'
     assert message.message_text == 'hi'

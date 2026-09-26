@@ -2,7 +2,8 @@
 
 == Lifecycle
 
-. The API validates the request, builds a message, and queues it.
+. The API validates the request, builds a message, and queues it. The message is `queued`,
+  and its status can be polled from now on.
 . A delivery worker takes the message and sends it to the SMSC as one `submit_sm`.
 . When the SMSC accepts it, the message becomes `sent`, and {product} records the SMSC's
   message id for receipt correlation.
@@ -50,7 +51,6 @@ Spaces and `-` in numbers are ignored.
 
 == Delivery receipts
 
-{product} asks the SMSC for a receipt (`registered_delivery = 1`) for messages that request
-one. That is every Kannel-origin message, and each HTTP message submitted with `dlr_url`.
+{product} asks the SMSC for a receipt (`registered_delivery = 1`) for every message.
 In this release, received `deliver_sm` receipts are acknowledged and discarded. Message status
 does not change after `sent`.

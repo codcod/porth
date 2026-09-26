@@ -6,15 +6,19 @@ from aiohttp import web
 
 from porth.core.message import SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 from porth.protocols.http.api import text_field
 
 logger = logging.getLogger(__name__)
 
 
-def create_kannel_app(message_queue: MessageQueue) -> web.Application:
+def create_kannel_app(
+    message_queue: MessageQueue, message_store: MessageStore
+) -> web.Application:
     """Create the aiohttp application serving Kannel's GET /cgi-bin/sendsms."""
     app = web.Application()
     app['message_queue'] = message_queue
+    app['message_store'] = message_store
     app.router.add_get('/cgi-bin/sendsms', kannel_send_sms, allow_head=False)
     return app
 
@@ -40,9 +44,9 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             dlr_url=params.get('dlr-url'),
         )
 
-        # Add to message queue
-        message_queue = request.app['message_queue']
-        await message_queue.put(message)
+        # Store before queueing, so a poll right after the response finds it
+        request.app['message_store'].add(message)
+        await request.app['message_queue'].put(message)
 
         # Return Kannel-style response
         response_text = f'0: Accepted for delivery\nMessage-ID: {message.message_id}'

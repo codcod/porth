@@ -9,6 +9,7 @@ from porth.config.settings import Settings, SMPPClientConfig
 from porth.core.delivery import DeliveryEngine
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 from porth.protocols.smpp.client import SMPPClient
 
 
@@ -31,7 +32,7 @@ async def test_smpp_message_flow():
 
     server.on_message_received = on_message_received
 
-    engine = DeliveryEngine(MessageQueue(), Settings())
+    engine = DeliveryEngine(MessageQueue(), MessageStore(), Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
     )
@@ -54,4 +55,4 @@ async def test_smpp_message_flow():
     assert received[0].data_coding == 0
     assert received[0].get_message_text() == 'Hello @ €'
     assert message.status == MessageStatus.SENT
-    assert message.protocol_data['smsc_message_id'] == 'smsc-1'
+    assert message.protocol_data['smsc_message_ids'] == ['smsc-1']
