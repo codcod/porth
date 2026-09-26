@@ -26,6 +26,16 @@ see <<Limitations>>.
 
 Longer text is rejected as `failed`. Concatenated SMS are not sent yet.
 
+== Addresses
+
+{product} sets the SMPP type of number (TON) and numbering plan (NPI) from each address:
+
+* `+` followed by digits goes out as international/ISDN, without the `+`.
+* Plain digits go out as unknown/unknown.
+* Anything else, such as `Porth`, goes out as an alphanumeric sender.
+
+Spaces and `-` in numbers are ignored.
+
 == The SMSC bind
 
 {product} opens one transceiver bind to the configured SMSC.

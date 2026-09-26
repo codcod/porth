@@ -1,9 +1,10 @@
 """Kannel-compatible API implementation."""
 
 import logging
+
 from aiohttp import web
+
 from porth.core.message import SMSMessage
-from porth.protocols.kannel.models import KannelSMSRequest
 
 logger = logging.getLogger(__name__)
 
@@ -12,30 +13,19 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
     """Kannel-compatible SMS send endpoint."""
     try:
         # Parse query parameters (Kannel style)
-        params = dict(request.query)
+        params = request.query
 
-        # Convert to internal format
-        kannel_request = KannelSMSRequest(
-            username=params.get('username', ''),
-            password=params.get('password', ''),
-            to=params.get('to', ''),
-            **{'from': params.get('from', '')},
-            text=params.get('text', ''),
-            **{'dlr-url': params.get('dlr-url')},
-            **{'dlr-mask': params.get('dlr-mask', '1')},
-        )
-
-        # Create internal message
+        # Create internal message; username/password are never checked (design.md §2)
         message = SMSMessage(
-            source_addr=kannel_request.from_,
-            destination_addr=kannel_request.to,
-            message_text=kannel_request.text,
+            source_addr=params.get('from', ''),
+            destination_addr=params.get('to', ''),
+            message_text=params.get('text', ''),
             protocol='kannel',
             protocol_data={
-                'username': kannel_request.username,
-                'dlr_mask': kannel_request.dlr_mask,
+                'username': params.get('username', ''),
+                'dlr_mask': params.get('dlr-mask', '1'),
             },
-            dlr_url=kannel_request.dlr_url,
+            dlr_url=params.get('dlr-url'),
         )
 
         # Add to message queue

@@ -33,8 +33,7 @@ async def test_smpp_message_flow():
 
     engine = DeliveryEngine(MessageQueue(), Settings())
     porth_client = SMPPClient(
-        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
-        engine,
+        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
     )
     engine.smpp_client = porth_client
     message = SMSMessage(

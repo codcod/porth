@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-e2e test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build docker-build docker-run logs
+.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build
 
 # Default target
 .DEFAULT_GOAL := help
@@ -72,10 +72,6 @@ test-integration: ## Run integration tests only
 	@echo "Running integration tests..."
 	$(UV) run pytest $(TEST_DIR)/integration -v
 
-test-e2e: ## Run end-to-end tests only
-	@echo "Running end-to-end tests..."
-	$(UV) run pytest $(TEST_DIR)/e2e -v
-
 test-coverage: ## Run tests with coverage report
 	@echo "Running tests with coverage..."
 	$(UV) run pytest $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -v
@@ -141,15 +137,6 @@ deps-list: ## List installed dependencies
 	@echo "Installed dependencies:"
 	$(UV) pip list
 
-# Development utilities
-logs: ## Show application logs (if running)
-	@echo "Showing recent logs..."
-	@if [ -f logs/porth.log ]; then \
-		tail -f logs/porth.log; \
-	else \
-		echo "No log file found. Run 'make dev-run' first."; \
-	fi
-
 shell: ## Start Python shell with project context
 	@echo "Starting Python shell..."
 	$(UV) run $(PYTHON) -c "import sys; sys.path.insert(0, '$(SRC_DIR)'); import $(PROJECT_NAME); print('Porth SMS Gateway shell ready')"
@@ -165,19 +152,6 @@ docs-check: ## Validate the AsciiDoc user manual (broken includes/xrefs fail)
 
 docs-build: ## Render the user manual to PDF + EPUB into dist/docs/
 	snowball build -o dist/docs
-
-# Docker (optional - for future use)
-docker-build: ## Build Docker image
-	@echo "Building Docker image..."
-	docker build -t $(PROJECT_NAME):latest .
-
-docker-run: ## Run application in Docker
-	@echo "Running application in Docker..."
-	docker run -p 8080:8080 --env-file .env $(PROJECT_NAME):latest
-
-# Database/Storage (for future use)
-db-migrate: ## Run database migrations (placeholder)
-	@echo "Database migrations not implemented yet"
 
 # Monitoring and Health
 health-check: ## Check application health
