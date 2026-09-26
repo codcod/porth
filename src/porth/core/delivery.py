@@ -9,6 +9,7 @@ from porth.config.settings import Settings
 from porth.core.exceptions import DeliveryError, MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 
 if tp.TYPE_CHECKING:
     from porth.protocols.smpp.client import SMPPClient
@@ -19,8 +20,14 @@ logger = logging.getLogger(__name__)
 class DeliveryEngine:
     """Async delivery engine with retry logic."""
 
-    def __init__(self, message_queue: MessageQueue, settings: Settings):
+    def __init__(
+        self,
+        message_queue: MessageQueue,
+        message_store: MessageStore,
+        settings: Settings,
+    ):
         self.message_queue = message_queue
+        self.message_store = message_store
         self.settings = settings
         self.workers: list[asyncio.Task] = []
         self.running = False
@@ -123,7 +130,9 @@ class DeliveryEngine:
 
             message.status = MessageStatus.SENT
             message.sent_at = datetime.utcnow()
-            message.protocol_data['smsc_message_id'] = result['smsc_message_id']
+            ids = [result['smsc_message_id']]
+            message.protocol_data['smsc_message_ids'] = ids
+            self.message_store.add_smsc_ids(message, ids)
 
             logger.info(f'Message {message.message_id} sent')
 

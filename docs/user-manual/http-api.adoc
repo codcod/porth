@@ -13,9 +13,10 @@ The API has no authentication. See <<Introduction>>.
 | `source_addr` (or `from_number`) | yes | Sender address.
 | `destination_addr` (or `to_number`) | yes | Recipient address.
 | `message_text` (or `message`) | yes | Message text.
-| `dlr_url` | no | Accepted, but no callback is ever sent. Giving it makes {product}
-request a delivery receipt from the SMSC.
 |===
+
+There is no delivery callback. Poll the message's status instead (see <<Message status>>). A
+body that contains `dlr_url` is rejected with `400`.
 
 [source,bash]
 ----
@@ -37,10 +38,31 @@ A queued message returns `200`:
 
 == Message status
 
-`GET /api/v1/sms/status/{message_id}`
+`GET /api/v1/sms/status/{message_id}` returns `200`:
 
-In this release the endpoint is a placeholder. It returns `status: pending` for any id,
-including unknown ones. See <<Limitations>>.
+[source,json]
+----
+{"message_id": "3f1c…", "status": "sent", "created_at": "2026-09-26T10:39:09Z",
+ "sent_at": "2026-09-26T10:39:10Z", "delivered_at": null}
+----
+
+[cols="1,4",options="header"]
+|===
+| Field | Meaning
+
+| `status` | `queued`, `sent`, `delivered`, `failed` or `expired`. See <<Message delivery>>.
+| `created_at` | When {product} accepted the message.
+| `sent_at` | When the SMSC accepted the message, or `null`.
+| `delivered_at` | When a delivery receipt reported it delivered, or `null`.
+|===
+
+Timestamps are UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`. An unknown id returns `404` with
+`{"error": "Message not found", "details": <message_id>}`.
+
+Messages sent through the Kannel-compatible API can be polled here too, by the `Message-ID`
+that `sendsms` returned.
+
+{product} keeps message records in memory. They are lost on restart. See <<Limitations>>.
 
 == Health
 

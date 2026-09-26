@@ -9,6 +9,7 @@ from aiohttp import web
 from porth.config.settings import HTTPConfig, KannelConfig, Settings, load_settings
 from porth.core.delivery import DeliveryEngine
 from porth.core.queue import MessageQueue
+from porth.core.store import MessageStore
 from porth.protocols.http.api import create_http_app
 from porth.protocols.kannel.api import create_kannel_app
 from porth.protocols.smpp.client import SMPPClient
@@ -20,7 +21,10 @@ class SMSGateway:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.message_queue = MessageQueue()
-        self.delivery_engine = DeliveryEngine(self.message_queue, settings)
+        self.message_store = MessageStore()
+        self.delivery_engine = DeliveryEngine(
+            self.message_queue, self.message_store, settings
+        )
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
 
@@ -31,9 +35,13 @@ class SMSGateway:
 
         # Start the HTTP API and the Kannel-compatible API, each on its own listener
         await self._serve(
-            create_http_app(self.message_queue, self.settings), self.settings.http
+            create_http_app(self.message_queue, self.message_store, self.settings),
+            self.settings.http,
         )
-        await self._serve(create_kannel_app(self.message_queue), self.settings.kannel)
+        await self._serve(
+            create_kannel_app(self.message_queue, self.message_store),
+            self.settings.kannel,
+        )
 
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
