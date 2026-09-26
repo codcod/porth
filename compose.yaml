@@ -1,0 +1,71 @@
+# Reference Kannel wired to an smppai SMSC, for comparing porth's Kannel API
+# against the real thing. Kannel sendsms on host :14013 (porth uses :13013).
+#
+#   docker compose up --build
+#   curl 'http://localhost:14013/cgi-bin/sendsms?username=tester&password=foobar&from=ACME&to=306900000000&text=hi'
+
+x-kannel: &kannel
+  build:
+    dockerfile_inline: |
+      FROM debian:bookworm-slim
+      RUN apt-get update && apt-get install -y --no-install-recommends kannel && rm -rf /var/lib/apt/lists/*
+  image: porth-kannel
+  restart: on-failure
+  configs:
+    - source: kannel.conf
+      target: /etc/kannel/kannel.conf
+
+services:
+  smppai:
+    build:
+      dockerfile_inline: |
+        FROM python:3.13-slim
+        RUN pip install --no-cache-dir https://github.com/codcod/smppai/archive/main.tar.gz
+    # default SMPPServer auth accepts any system_id/password
+    command: ["python", "-c", "import asyncio; from smpp import SMPPServer; asyncio.run(SMPPServer('0.0.0.0', 2775).serve_forever())"]
+
+  bearerbox:
+    <<: *kannel
+    command: ["bearerbox", "/etc/kannel/kannel.conf"]
+    depends_on: [smppai]
+    ports: ["13000:13000"]
+
+  smsbox:
+    <<: *kannel
+    command: ["smsbox", "/etc/kannel/kannel.conf"]
+    depends_on: [bearerbox]
+    ports: ["14013:13013"]
+
+configs:
+  kannel.conf:
+    content: |
+      group = core
+      admin-port = 13000
+      admin-password = admin
+      admin-allow-ip = "*.*.*.*"
+      smsbox-port = 13001
+      box-allow-ip = "*.*.*.*"
+      log-level = 0
+
+      group = smsc
+      smsc = smpp
+      smsc-id = smppai
+      host = smppai
+      port = 2775
+      transceiver-mode = true
+      smsc-username = kannel
+      smsc-password = kannel
+      system-type = VMA
+
+      group = smsbox
+      bearerbox-host = bearerbox
+      sendsms-port = 13013
+      log-level = 0
+
+      group = sendsms-user
+      username = tester
+      password = foobar
+
+      group = sms-service
+      keyword = default
+      text = "No service"
