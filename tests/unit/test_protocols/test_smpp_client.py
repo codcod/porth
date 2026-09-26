@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from smpp import DeliverSm
 from smpp.exceptions import SMPPMessageException
 from smpp.gsm import make_parts
 
@@ -218,3 +219,62 @@ async def test_cancelled_bind_is_closed(smpp, monkeypatch):
         await send
     assert FakeSmppai.instances[0].disconnected
     assert smpp.client is None
+
+
+def deliver_sm(text: str, esm_class: int) -> DeliverSm:
+    return DeliverSm(
+        source_addr='5678',
+        destination_addr='1234',
+        short_message=text.encode(),
+        esm_class=esm_class,
+    )
+
+
+@pytest.mark.asyncio
+async def test_receipts_reach_on_receipt_and_mo_is_dropped(smpp):
+    receipts = []
+    smpp.on_receipt = receipts.append
+    await smpp.connect()
+    fake = FakeSmppai.instances[0]
+    fake.on_deliver_sm(fake, deliver_sm('hello', 0))  # MO: dropped
+    fake.on_deliver_sm(fake, deliver_sm('id:smsc-42 stat:DELIVRD err:000', 0x04))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert [m.receipt.id for m in receipts] == ['smsc-42']
+    await smpp.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_lost_connection_ends_the_consumer_quietly(smpp):
+    await smpp.connect()
+    fake, inbound = FakeSmppai.instances[0], smpp._inbound
+    fake.on_connection_lost(fake, ConnectionError('gone'))
+    await inbound
+    assert inbound.exception() is None
+
+
+@pytest.mark.asyncio
+async def test_rebind_and_disconnect_cancel_the_consumer(smpp):
+    await smpp.connect()
+    first_inbound = smpp._inbound
+    FakeSmppai.instances[0].bound = False
+    await smpp.connect()
+    await asyncio.sleep(0)
+    assert first_inbound.cancelled()
+    second_inbound = smpp._inbound
+    assert second_inbound is not None and not second_inbound.done()
+    await smpp.disconnect()
+    await asyncio.sleep(0)
+    assert second_inbound.cancelled()
+    assert smpp._inbound is None
+
+
+@pytest.mark.asyncio
+async def test_failed_submit_cancels_the_consumer(smpp):
+    await smpp.connect()
+    inbound = smpp._inbound
+    FakeSmppai.submit_error = RuntimeError('boom')
+    with pytest.raises(RuntimeError):
+        await smpp.send_message(msg('hi'))
+    await asyncio.sleep(0)
+    assert inbound.cancelled()

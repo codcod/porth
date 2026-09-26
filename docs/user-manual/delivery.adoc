@@ -13,8 +13,10 @@
 . Some failures are permanent: text needing more than 255 parts ends `failed` at once, with
   no retry.
 
-A message becomes `delivered` only from a delivery receipt. That path is not available yet,
-see <<Limitations>>.
+. A delivery receipt from the SMSC then moves a `sent` message to `delivered`, `failed` or
+  `expired`. See <<Delivery receipts>>.
+
+A message becomes `delivered`, or `expired`, only from a delivery receipt.
 
 == Encoding and length
 
@@ -57,6 +59,27 @@ Spaces and `-` in numbers are ignored.
 
 == Delivery receipts
 
-{product} asks the SMSC for a receipt (`registered_delivery = 1`) for every message.
-In this release, received `deliver_sm` receipts are acknowledged and discarded. Message status
-does not change after `sent`.
+{product} asks the SMSC for a receipt (`registered_delivery = 1`) for every message. Each
+receipt reports on one part, by the SMSC message id the SMSC returned for it, and moves the
+message on as follows:
+
+[cols="2,3",options="header"]
+|===
+| Receipt state | Message status
+
+| `DELIVERED` | `delivered`, once every part has a `DELIVERED` receipt
+| `UNDELIVERABLE`, `REJECTED`, `DELETED` | `failed`, on the first such part
+| `EXPIRED` | `expired`, on the first such part
+| `ENROUTE`, `ACCEPTED`, `UNKNOWN`, or none | unchanged, not a final outcome
+|===
+
+`delivered_at` is the time the last part's receipt arrived, in UTC. HTTP API clients see
+the new status on their next poll. For a Kannel `dlr-url` callback, see <<Delivery reports>>.
+
+* A receipt is matched by the exact SMSC message id. A receipt whose id {product} does not
+  know is logged at info and ignored. If every receipt is ignored, the SMSC reports ids in
+  a different format from its `submit_sm` responses.
+* A receipt for a message that is already `delivered`, `failed` or `expired` is ignored.
+* Receipts arrive only while the bind is up. After a lost bind, the receipts the SMSC holds
+  arrive once the next send rebinds.
+* Other inbound messages (mobile-originated SMS) are acknowledged and dropped.

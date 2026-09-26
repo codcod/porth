@@ -9,8 +9,6 @@ The ticket reference identifies the planned change.
 
 | Kannel-compatible `sendsms` API | `GET` only. Parameters beyond `to`, `from`, `text`,
 `dlr-url` and `dlr-mask` are ignored. Response codes are not yet Kannel's exact table. | POR-005
-| Delivery receipts | Acknowledged and discarded. Status never becomes `delivered`, and no
-Kannel `dlr-url` callback is made. | POR-002
 | Receipt timeout | A message with no receipt never becomes `expired`. | POR-003
 | Message records | Kept in memory until restart. Nothing is evicted. | POR-003
 | Retries | A fixed delay with no backoff. Retries are processed one at a time. | POR-010

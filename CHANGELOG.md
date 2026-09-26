@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   any id (POR-009).
 - Text longer than one SMS is sent as a concatenated SMS (UDH), up to 255 parts. If a part
   fails, the whole message is retried (POR-006).
+- Delivery receipts from the SMSC move a message to `delivered` (once every part is
+  delivered), `failed` or `expired`, which the HTTP status poll shows. A Kannel message with
+  a `dlr-url` and a matching `dlr-mask` (1 delivered, 2 not delivered) gets it fetched once,
+  with `%d`, `%I`, `%F`, `%A`, `%t` and `%T` substituted, in up to 3 attempts (POR-002).
 
 **Changed**
 

@@ -56,7 +56,7 @@ flowchart TB
     Delivery -->|status| Store
     SMPP_Client -->|deliver_sm receipt| DLR
     DLR -->|status| Store
-    DLR -->|POST| KannelTarget
+    DLR -->|GET| KannelTarget
     HTTP_API -->|poll status| Store
 ....
 

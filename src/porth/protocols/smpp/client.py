@@ -4,7 +4,7 @@ import asyncio
 import logging
 import typing as tp
 
-from smpp import Address, DataCoding, RegisteredDelivery
+from smpp import Address, Client, DataCoding, Message, RegisteredDelivery
 from smpp import SMPPClient as SmppaiClient
 from smpp.exceptions import SMPPException, SMPPPDUException
 from smpp.gsm import make_parts
@@ -35,9 +35,15 @@ def choose_data_coding(text: str) -> DataCoding:
 class SMPPClient:
     """SMPP client for sending messages to SMSC."""
 
-    def __init__(self, config: SMPPClientConfig):
+    def __init__(
+        self,
+        config: SMPPClientConfig,
+        on_receipt: tp.Optional[tp.Callable[[Message], None]] = None,
+    ):
         self.config = config
+        self.on_receipt = on_receipt
         self.client: tp.Optional[SmppaiClient] = None
+        self._inbound: tp.Optional[asyncio.Task] = None  # the bind's receipt consumer
         self._connect_lock = asyncio.Lock()
 
     @property
@@ -51,8 +57,7 @@ class SMPPClient:
             if self.client is not None and self.client.is_bound:
                 return self.client
             # A client left over from an unbind or lost connection is dead; close it.
-            await self._close(self.client)
-            self.client = None
+            await self._drop()
             client = SmppaiClient(
                 host=self.config.host,
                 port=self.config.port,
@@ -60,6 +65,9 @@ class SMPPClient:
                 password=self.config.password,
                 system_type=self.config.system_type,
             )
+            # Wrap before the bind, so receipts the SMSC flushes right behind
+            # bind_resp wait in smppai's queue instead of being acked and dropped.
+            inbound = Client(client)
             try:
                 await client.connect()
                 await client.bind_transceiver()
@@ -70,6 +78,7 @@ class SMPPClient:
                 raise
 
             self.client = client
+            self._inbound = asyncio.create_task(self._consume(inbound))
             logger.info(
                 f'SMPP client connected to {self.config.host}:{self.config.port}'
             )
@@ -77,8 +86,7 @@ class SMPPClient:
 
     async def disconnect(self) -> None:
         """Disconnect from SMSC."""
-        client, self.client = self.client, None
-        await self._close(client)
+        await self._drop()
         logger.info('SMPP client disconnected')
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
@@ -119,8 +127,7 @@ class SMPPClient:
                 isinstance(e, SMPPException) and e.command_status is not None
             )
             if not smsc_rejected and self.client is client:
-                self.client = None
-                await self._close(client)
+                await self._drop()
             raise
 
         logger.info(f'Message {message.message_id} sent via SMPP')
@@ -129,6 +136,33 @@ class SMPPClient:
             'status': 'submitted',
             'smsc_message_ids': smsc_message_ids,
         }
+
+    async def _consume(self, inbound: Client) -> None:
+        """Hand receipts (parsed by smppai) to on_receipt until the connection is lost.
+
+        On porth's own disconnect or an SMSC unbind messages() never ends; cancelling
+        this task is then its only exit.
+        """
+        try:
+            async for msg in inbound.messages():
+                if not msg.is_receipt or self.on_receipt is None:
+                    # MO routing is not in MVP (design.md §2)
+                    logger.info(f'Inbound message from {msg.sender} dropped')
+                    continue
+                try:
+                    self.on_receipt(msg)
+                except Exception:
+                    logger.exception('Error handling delivery receipt')
+        except Exception as e:
+            logger.warning(f'SMPP inbound stream ended: {e!r}')
+
+    async def _drop(self) -> None:
+        """Forget the current bind: stop its receipt consumer, then close it."""
+        client, self.client = self.client, None
+        if self._inbound is not None:
+            self._inbound.cancel()
+            self._inbound = None
+        await self._close(client)
 
     @staticmethod
     async def _close(client: tp.Optional[SmppaiClient]) -> None:
