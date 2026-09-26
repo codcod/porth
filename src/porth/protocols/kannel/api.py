@@ -25,10 +25,15 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         # Parse query parameters (Kannel style)
         params = request.query
 
+        # Kannel separates several recipients with spaces; porth sends to one
+        recipients = text_field(params, 'to').split()
+        if len(recipients) != 1:
+            raise ValueError('to must be a single recipient')
+
         # Create internal message; username/password are never read (design.md §2)
         message = SMSMessage(
-            source_addr=params.get('from', ''),
-            destination_addr=text_field(params, 'to'),
+            source_addr=text_field(params, 'from'),
+            destination_addr=recipients[0],
             message_text=text_field(params, 'text'),
             protocol='kannel',
             protocol_data={'dlr_mask': params.get('dlr-mask', '1')},

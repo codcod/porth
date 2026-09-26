@@ -12,9 +12,9 @@ the host it points at.
 |===
 | Parameter | Required | Meaning
 
-| `to` | yes | Recipient address.
+| `to` | yes | Recipient address. One recipient only: a space-separated list returns `400`.
 | `text` | yes | Message text.
-| `from` | no | Sender address.
+| `from` | yes | Sender address. {product} has no default sender.
 | `dlr-url` | no | Accepted, but no callback is ever sent.
 | `dlr-mask` | no | Accepted, but has no effect: {product} always requests a delivery
 receipt from the SMSC.
@@ -35,5 +35,5 @@ A queued message returns `200` with a `text/plain` body:
 Message-ID: 3f1c…
 ----
 
-`200` means the message was queued, not sent. A missing `to` or `text` returns `400` with
+`200` means the message was queued, not sent. A missing `to`, `from` or `text` returns `400` with
 `3: Failed to send SMS: <reason>`.

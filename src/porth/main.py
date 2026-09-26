@@ -51,8 +51,8 @@ class SMSGateway:
     async def _serve(self, app: web.Application, config: HTTPConfig | KannelConfig):
         runner = web.AppRunner(app)
         await runner.setup()
+        self.servers.append(runner)  # before the bind, so stop() cleans up a failed one
         await web.TCPSite(runner, config.host, config.port).start()
-        self.servers.append(runner)
 
     async def stop(self):
         """Stop all gateway components."""

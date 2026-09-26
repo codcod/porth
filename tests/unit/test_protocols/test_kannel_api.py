@@ -39,14 +39,26 @@ async def test_sendsms_queues_the_message(kannel):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('missing', ['to', 'text'])
-async def test_sendsms_requires_to_and_text(kannel, missing):
+@pytest.mark.parametrize('missing', ['to', 'from', 'text'])
+async def test_sendsms_requires_to_from_and_text(kannel, missing):
     client, queue = kannel
-    params = {'to': '+306900000000', 'text': 'hi'}
+    params = {'to': '+306900000000', 'from': 'porth', 'text': 'hi'}
     del params[missing]
     resp = await client.get('/cgi-bin/sendsms', params=params)
     assert resp.status == 400
     assert (await resp.text()).startswith('3:')
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_sendsms_rejects_multiple_recipients(kannel):
+    client, queue = kannel
+    resp = await client.get(
+        '/cgi-bin/sendsms',
+        params={'to': '+306900000000 +306911111111', 'from': 'porth', 'text': 'hi'},
+    )
+    assert resp.status == 400
+    assert 'single recipient' in await resp.text()
     assert queue.empty()
 
 
