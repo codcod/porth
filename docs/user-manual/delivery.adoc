@@ -4,13 +4,14 @@
 
 . The API validates the request, builds a message, and queues it. The message is `queued`,
   and its status can be polled from now on.
-. A delivery worker takes the message and sends it to the SMSC as one `submit_sm`.
-. When the SMSC accepts it, the message becomes `sent`, and {product} records the SMSC's
-  message id for receipt correlation.
+. A delivery worker takes the message and sends it to the SMSC as one `submit_sm` per part.
+  Text that fits one SMS is one part.
+. When the SMSC accepts every part, the message becomes `sent`, and {product} records the
+  SMSC's message id for each part, for receipt correlation.
 . If the send fails, the message waits `delivery.retry_delay` seconds and is queued again.
   After `delivery.max_retries` attempts in total it ends `failed`.
-. Some failures are permanent: text that does not fit one SMS ends `failed` at once, with no
-  retry.
+. Some failures are permanent: text needing more than 255 parts ends `failed` at once, with
+  no retry.
 
 A message becomes `delivered` only from a delivery receipt. That path is not available yet,
 see <<Limitations>>.
@@ -20,12 +21,15 @@ see <<Limitations>>.
 {product} picks the SMPP `data_coding` for each message:
 
 * **GSM 03.38 (`data_coding` 0)** when every character is in the GSM 7-bit alphabet or its
-  extension table. The limit is 160 octets, and extension characters such as `€`, `[`, `]`,
-  `{`, `}`, `~` and the backslash take two.
-* **UCS-2 (`data_coding` 8)** otherwise. The limit is 140 octets: 70 characters, and a
-  character outside the Basic Multilingual Plane, such as most emoji, takes two.
+  extension table. One SMS holds 160 septets, and extension characters such as `€`, `[`,
+  `]`, `{`, `}`, `~` and the backslash take two.
+* **UCS-2 (`data_coding` 8)** otherwise. One SMS holds 70 characters, and a character outside
+  the Basic Multilingual Plane, such as most emoji, takes two.
 
-Longer text is rejected as `failed`. Concatenated SMS are not sent yet.
+Longer text is sent as a concatenated SMS: several parts, each carrying a user data header
+(UDH) that lets the handset reassemble them. The header takes room, so each part holds 153
+GSM or 67 UCS-2 characters. An extension character is never split across two parts. A
+message can have at most 255 parts.
 
 == Addresses
 
@@ -48,6 +52,8 @@ Spaces and `-` in numbers are ignored.
   bind open. That message goes through the normal retry path.
 * A send that times out is retried, even though the SMSC may already have accepted it. The
   recipient can then get the message twice.
+* If one part of a long message fails, the whole message is retried, with every part sent
+  again. The recipient may also see an incomplete fragment from the failed attempt.
 
 == Delivery receipts
 

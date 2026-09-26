@@ -56,3 +56,41 @@ async def test_smpp_message_flow():
     assert received[0].get_message_text() == 'Hello @ €'
     assert message.status == MessageStatus.SENT
     assert message.protocol_data['smsc_message_ids'] == ['smsc-1']
+
+
+@pytest.mark.asyncio
+async def test_long_message_goes_out_in_parts():
+    """Text longer than one SMS reaches the SMSC as UDH-concatenated submit_sm parts."""
+    port = free_port()
+    received = []
+    server = SMPPServer(host='127.0.0.1', port=port, setup_signal_handlers=False)
+
+    def on_message_received(server, session, pdu):
+        received.append(pdu)
+        return f'smsc-{len(received)}'
+
+    server.on_message_received = on_message_received
+
+    engine = DeliveryEngine(MessageQueue(), MessageStore(), Settings())
+    porth_client = SMPPClient(
+        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
+    )
+    engine.smpp_client = porth_client
+    message = SMSMessage(
+        source_addr='1234',
+        destination_addr='5678',
+        message_text='a' * 200,
+        protocol='http',
+    )
+
+    await server.start()
+    try:
+        await engine._process_message(message)
+    finally:
+        await porth_client.disconnect()
+        await server.stop()
+
+    assert len(received) == 2
+    assert all(pdu.esm_class & 0x40 for pdu in received)  # UDHI set by smppai
+    assert message.status == MessageStatus.SENT
+    assert message.protocol_data['smsc_message_ids'] == ['smsc-1', 'smsc-2']

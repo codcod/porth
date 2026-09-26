@@ -9,9 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 **Added**
 
 - Messages are sent to the upstream SMSC as a real `submit_sm` over one smppai transceiver
-  bind. GSM 03.38 text goes out as `data_coding` 0 and anything else as UCS-2. Text longer
-  than one SMS is rejected as `failed`. A failed transport drops the bind, and the next send
-  rebinds (POR-001).
+  bind. GSM 03.38 text goes out as `data_coding` 0 and anything else as UCS-2. A failed
+  transport drops the bind, and the next send rebinds (POR-001).
 - User manual (AsciiDoc, built with snowball), attached as PDF and EPUB to the GitHub release
   of every version tag (POR-007).
 - The Kannel-compatible `GET /cgi-bin/sendsms` endpoint, on its own port `kannel.port`
@@ -20,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `GET /api/v1/sms/status/{message_id}` returns the message's real status and timestamps from
   an in-memory message store, and `404` for an unknown id. Before, it answered `pending` for
   any id (POR-009).
+- Text longer than one SMS is sent as a concatenated SMS (UDH), up to 255 parts. If a part
+  fails, the whole message is retried (POR-006).
 
 **Changed**
 
