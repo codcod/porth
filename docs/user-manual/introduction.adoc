@@ -14,6 +14,8 @@ The minimum viable product covers:
 * Delivery receipts (DLRs) correlated back to the submitting client: a status the HTTP client
   polls, or a callback to a Kannel client's `dlr-url`.
 * Unicode (UCS-2) and concatenated (multi-part) SMS.
+* Mobile-originated (MO) SMS forwarded to an application URL, as Kannel's `get-url`, with a
+  plain-text reply sent back to the subscriber.
 
 Some of this is not available yet in this release. <<Limitations>> lists what is missing.
 
@@ -44,11 +46,13 @@ flowchart TB
         Delivery["Delivery engine (retry)"]
         Store["Message status (in-process)"]
         DLR["DLR handler"]
+        MO["MO handler"]
     end
     subgraph Egress
         SMPP_Client["SMPP client (one bind to the SMSC)"]
     end
     KannelTarget["Kannel client's dlr-url"]
+    Application["Application MO URL"]
     HTTP_API -->|submit| Queue
     Kannel_API -->|submit| Queue
     Queue --> Delivery
@@ -57,8 +61,11 @@ flowchart TB
     SMPP_Client -->|deliver_sm receipt| DLR
     DLR -->|status| Store
     DLR -->|GET| KannelTarget
+    SMPP_Client -->|deliver_sm MO| MO
+    MO -->|GET| Application
+    MO -->|reply| Queue
     HTTP_API -->|poll status| Store
 ....
 
 SMPP is only an egress protocol: {product} sends `submit_sm` to the SMSC and receives
-`deliver_sm` receipts on the same bind. It never accepts `submit_sm` from anyone else.
+`deliver_sm` receipts and MO on the same bind. It never accepts `submit_sm` from anyone else.

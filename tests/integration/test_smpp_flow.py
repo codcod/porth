@@ -6,12 +6,13 @@ import socket
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from smpp import SMPPServer
+from smpp import NpiType, SMPPServer, TonType
 
-from porth.config.settings import Settings, SMPPClientConfig
+from porth.config.settings import MOConfig, Settings, SMPPClientConfig
 from porth.core.delivery import DeliveryEngine
 from porth.core.dlr import DLRHandler
 from porth.core.message import MessageStatus, SMSMessage
+from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
 from porth.core.store import MessageStore
 from porth.protocols.smpp.client import SMPPClient
@@ -178,3 +179,68 @@ async def test_receipt_calls_kannel_dlr_url():
         await dlr_server.close()
     assert message.status == MessageStatus.DELIVERED
     assert [dict(r.query) for r in requests] == [{'d': '1', 'f': 'smsc-1'}]
+
+
+@pytest.mark.asyncio
+async def test_mo_reaches_the_application_and_its_reply_goes_back():
+    """An MO deliver_sm is forwarded to mo.url; its text/plain reply is sent as submit_sm."""
+    queries = []
+
+    async def application(request):
+        queries.append(dict(request.query))
+        return web.Response(text='Thanks')
+
+    app = web.Application()
+    app.router.add_get('/mo', application)
+    app_server = TestServer(app)
+    await app_server.start_server()
+
+    port = free_port()
+    received = []
+    server = SMPPServer(host='127.0.0.1', port=port, setup_signal_handlers=False)
+
+    def on_message_received(server, session, pdu):
+        received.append(pdu)
+        return 'smsc-1'
+
+    server.on_message_received = on_message_received
+
+    queue, store = MessageQueue(), MessageStore()
+    handler = MOHandler(
+        queue, store, MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p')
+    )
+    engine = DeliveryEngine(queue, store, Settings())
+    porth_client = SMPPClient(
+        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
+        on_mo=handler.on_mo,
+    )
+    engine.smpp_client = porth_client
+
+    await server.start()
+    await handler.start()
+    await engine.start()
+    try:
+        await porth_client.connect()
+        assert await server.deliver_sm(
+            'porth',
+            source_addr='306900000001',
+            source_addr_ton=TonType.INTERNATIONAL,
+            source_addr_npi=NpiType.ISDN,
+            destination_addr='1234',
+            short_message='Hello world',
+        )
+        async with asyncio.timeout(5):
+            while not received:
+                await asyncio.sleep(0.01)
+    finally:
+        await engine.stop()
+        await porth_client.disconnect()
+        await handler.stop()
+        await server.stop()
+        await app_server.close()
+
+    assert queries == [{'k': 'Hello', 'p': '+306900000001'}]
+    (pdu,) = received
+    assert pdu.destination_addr == '306900000001'
+    assert pdu.dest_addr_ton == TonType.INTERNATIONAL
+    assert pdu.get_message_text() == 'Thanks'

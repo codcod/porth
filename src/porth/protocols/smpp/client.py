@@ -45,12 +45,14 @@ class SMPPClient:
         self,
         config: SMPPClientConfig,
         on_receipt: tp.Optional[tp.Callable[[Message], None]] = None,
+        on_mo: tp.Optional[tp.Callable[[Message], None]] = None,
     ):
         self.config = config
         self.on_receipt = on_receipt
+        self.on_mo = on_mo
         self.client: tp.Optional[SmppaiClient] = None
         self._bind: tp.Optional[contextlib.AsyncExitStack] = None  # smpp.connect()'s
-        self._inbound: tp.Optional[asyncio.Task] = None  # the bind's receipt consumer
+        self._inbound: tp.Optional[asyncio.Task] = None  # the bind's inbound consumer
         self._keeper: tp.Optional[asyncio.Task] = None  # the rebind loop
         self._connect_lock = asyncio.Lock()
 
@@ -165,21 +167,26 @@ class SMPPClient:
         }
 
     async def _consume(self, inbound: Client) -> None:
-        """Hand receipts (parsed by smppai) to on_receipt until the bind ends.
+        """Hand receipts (parsed by smppai) to on_receipt and MO (reassembled by
+        smppai) to on_mo until the bind ends.
 
         Ends on a lost connection (the loss exception, logged) or once _drop() has
-        closed the bind (after every receipt still queued).
+        closed the bind (after every message still queued).
         """
         try:
             async for msg in inbound.messages():
-                if not msg.is_receipt or self.on_receipt is None:
-                    # MO routing is not in MVP (design.md §2)
-                    logger.info(f'Inbound message from {msg.sender} dropped')
+                kind, handler = (
+                    ('delivery receipt', self.on_receipt)
+                    if msg.is_receipt
+                    else ('MO', self.on_mo)
+                )
+                if handler is None:
+                    logger.info(f'Inbound {kind} from {msg.sender} dropped')
                     continue
                 try:
-                    self.on_receipt(msg)
+                    handler(msg)
                 except Exception:
-                    logger.exception('Error handling delivery receipt')
+                    logger.exception(f'Error handling {kind}')
         except Exception as e:
             logger.warning(f'SMPP inbound stream ended: {e!r}')
 

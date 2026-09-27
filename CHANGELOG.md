@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   delivered), `failed` or `expired`, which the HTTP status poll shows. A Kannel message with
   a `dlr-url` and a matching `dlr-mask` (1 delivered, 2 not delivered) gets it fetched once,
   with `%d`, `%I`, `%F`, `%A`, `%t` and `%T` substituted, in up to 3 attempts (POR-002).
+- Mobile-originated SMS is forwarded once to `mo.url` (Kannel's `get-url`), with `%p`, `%P`,
+  `%k`, `%r`, `%a`, `%b`, `%t`, `%T`, `%c` and `%C` substituted as Kannel 1.4.5 does. A
+  non-blank `text/plain` `200` or `202` answer, stripped of surrounding whitespace, is sent back to the subscriber as an SMS unless
+  `mo.reply` is off (POR-015).
 
 **Changed**
 

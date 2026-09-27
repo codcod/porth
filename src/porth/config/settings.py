@@ -43,11 +43,19 @@ class DeliveryConfig:
 
 
 @dataclasses.dataclass(kw_only=True)
+class MOConfig:
+    # Kannel get-url template; unset: each MO is logged and dropped
+    url: tp.Optional[str] = None
+    reply: bool = True  # False: Kannel's max-messages = 0
+
+
+@dataclasses.dataclass(kw_only=True)
 class Settings:
     http: HTTPConfig = dataclasses.field(default_factory=HTTPConfig)
     kannel: KannelConfig = dataclasses.field(default_factory=KannelConfig)
     smpp: SMPPConfig = dataclasses.field(default_factory=SMPPConfig)
     delivery: DeliveryConfig = dataclasses.field(default_factory=DeliveryConfig)
+    mo: MOConfig = dataclasses.field(default_factory=MOConfig)
 
     # Configuration and logging
     config_file: tp.Optional[str] = None

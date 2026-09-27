@@ -10,7 +10,7 @@ from aiohttp.test_utils import TestServer
 from smpp import DeliveryReceipt, MessageState
 
 from porth.core import dlr as dlr_module
-from porth.core.dlr import DLRHandler, expand_dlr_url
+from porth.core.dlr import DLRHandler, expand_url
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.store import MessageStore
 
@@ -133,7 +133,7 @@ async def test_stop_cancels_a_pending_recheck(store, monkeypatch):
     assert message.status == MessageStatus.SENT
 
 
-def test_expand_dlr_url_is_single_pass_and_quotes():
+def test_expand_url_is_single_pass_and_quotes():
     url = 'http://x/?id=%I&s=%d&f=%F&a=%A&t=%t&T=%T&p=%p&s2=%s'
     values = {
         'I': 'm-1',
@@ -143,15 +143,15 @@ def test_expand_dlr_url_is_single_pass_and_quotes():
         't': '2026-09-26 12:00',
         'T': '1790424000',
     }
-    assert expand_dlr_url(url, values) == (
+    assert expand_url(url, values) == (
         'http://x/?id=m-1&s=1&f=a%26b&a=id%3A1%20stat%3ADELIVRD%20%25d'
         '&t=2026-09-26%2012%3A00&T=1790424000&p=%p&s2=%s'
     )
 
 
-def test_expand_dlr_url_keeps_kannel_percent_rules():
+def test_expand_url_keeps_kannel_percent_rules():
     url = 'a=%%d&b=%d&c=caf%%C3%%A9&e=%x&f=%'
-    assert expand_dlr_url(url, {'d': '1'}) == 'a=%d&b=1&c=caf%C3%A9&e=%x&f=%'
+    assert expand_url(url, {'d': '1'}) == 'a=%d&b=1&c=caf%C3%A9&e=%x&f=%'
 
 
 class Recorder:
