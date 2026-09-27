@@ -15,9 +15,9 @@ the host it points at.
 | `to` | yes | Recipient address. One recipient only: a space-separated list returns `400`.
 | `text` | yes | Message text.
 | `from` | yes | Sender address. {product} has no default sender.
-| `dlr-url` | no | Accepted, but no callback is ever sent.
-| `dlr-mask` | no | Accepted, but has no effect: {product} always requests a delivery
-receipt from the SMSC.
+| `dlr-url` | no | URL to fetch with the message's final outcome. See <<Delivery reports>>.
+| `dlr-mask` | no | Which outcomes fetch `dlr-url`: `1` delivered, `2` not delivered, or
+their sum. Without it, no callback is made.
 | `username`, `password` | no | Accepted and ignored. The API has no authentication.
 |===
 
@@ -37,3 +37,46 @@ Message-ID: 3f1c…
 
 `200` means the message was queued, not sent. A missing `to`, `from` or `text` returns `400` with
 `3: Failed to send SMS: <reason>`.
+
+== Delivery reports
+
+When a delivery receipt settles a message (see <<Delivery receipts>>), {product}
+fetches the message's `dlr-url` if `dlr-mask` includes the outcome:
+
+[cols="1,1,3",options="header"]
+|===
+| Outcome | Bit | `%d`
+
+| `delivered` | 1 | `1`
+| `failed` or `expired` | 2 | `2`
+|===
+
+`dlr-mask` must be an integer. A missing or non-integer mask means no callback. The other
+Kannel bits (4, 8, 16) are never produced yet (POR-005).
+
+{product} replaces these escape codes in `dlr-url`, each URL-encoded:
+
+[cols="1,4",options="header"]
+|===
+| Code | Value
+
+| `%d` | The delivery report value from the table above.
+| `%I` | {product}'s message id, as returned in `Message-ID`.
+| `%F` | The SMSC message id of the part whose receipt settled the message.
+| `%A` | The receipt text the SMSC sent.
+| `%t` | The receipt's arrival time in UTC, as `YYYY-MM-DD HH:MM`.
+| `%T` | The receipt's arrival time as a UNIX timestamp.
+|===
+
+Any other `%` code, such as `%p` or `%P`, is left as written.
+
+* The callback is an HTTP `GET`. Any `2xx` answer is success.
+* {product} makes up to 3 attempts, 1 s and then 2 s apart, each with a 10 s timeout, and then
+  gives up.
+* There is one callback per message, including a long message sent in several parts.
+* There is no callback for a message that fails before the SMSC accepts it (POR-005).
+
+[source,bash]
+----
+curl 'http://localhost:13013/cgi-bin/sendsms?to=%2B306900000000&from=porth&text=Hello&dlr-mask=3&dlr-url=http%3A%2F%2Fapp.example%2Fdlr%3Fid%3D%25I%26status%3D%25d'
+----
