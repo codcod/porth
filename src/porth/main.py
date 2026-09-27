@@ -53,11 +53,8 @@ class SMSGateway:
                 client_config, on_receipt=self.dlr_handler.on_receipt
             )
             self.delivery_engine.smpp_client = smpp_client
-            try:
-                await smpp_client.connect()
-            except Exception as e:
-                # The first send retries the bind (lazy reconnect).
-                logging.error(f'SMPP client bind failed at startup: {e}')
+            # Binds now; if that fails, the client retries in the background
+            smpp_client.start()
             self.smpp_clients.append(smpp_client)
 
         logging.info('SMS Gateway started successfully')
@@ -72,7 +69,8 @@ class SMSGateway:
         """Stop all gateway components."""
         logging.info('Stopping SMS Gateway...')
 
-        # Stop delivery engine first, so no worker lazily rebinds a stopped client
+        # Stop delivery engine first, so no worker lazily rebinds a stopped client;
+        # disconnect() stops the client's own rebind loop
         try:
             await self.delivery_engine.stop()
         except Exception as e:

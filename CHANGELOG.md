@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   messages and HTTP messages with `dlr_url` (POR-009).
 - The HTTP API rejects a body with a non-empty `dlr_url` with `400`. Status is polled, never
   pushed. Before, `dlr_url` was accepted and no callback was ever sent (POR-009).
+- The SMPP bind is retried in the background every 10 s while it is down, including after a
+  failed startup bind. Before, only the next send rebound it (POR-013).
 
 **Removed**
 
@@ -47,6 +49,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Makefile targets (POR-011).
 - The `pydantic`, `pydantic-settings`, `structlog` and `watchdog` dependencies. Settings and
   request validation use the standard library (POR-011).
+
+**Fixed**
+
+- A part's delivery receipt that arrives before the message's later parts are submitted is
+  looked up again for about 15 s instead of being ignored, so the message still becomes
+  `delivered` (POR-013).
+- Receipts the SMSC holds after a lost or SMSC-unbound bind arrive without new traffic: the
+  bind is reopened in the background (POR-013).
+- Receipts already received when porth closes a bind, after a send timeout or at shutdown,
+  are applied instead of dropped (POR-013).
+- `%%` in a Kannel `dlr-url` is a literal `%`, as in Kannel, so percent-encoded bytes can be
+  kept intact as `%%C3%%A9` (POR-013).
 
 ## [0.1.0] - 2026-09-22
 

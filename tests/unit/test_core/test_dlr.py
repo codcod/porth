@@ -78,15 +78,59 @@ def test_state_mapping(store, state, status):
     assert message.status == status
 
 
-def test_unknown_id_and_terminal_message_are_ignored(store):
-    handler = DLRHandler(store)
+@pytest.mark.asyncio
+async def test_unknown_id_and_terminal_message_are_ignored(store, handler, caplog):
+    caplog.set_level('INFO')
     message = sent(store, ['s1'])
     handler.on_receipt(receipt('nope', MessageState.DELIVERED))
     handler.on_receipt(receipt(None, MessageState.DELIVERED))
+    assert 'unknown SMSC id None ignored' in caplog.text
+    assert "'nope'" not in caplog.text  # still being looked up
+    await settle(handler)
+    assert "unknown SMSC id 'nope' ignored" in caplog.text
     assert message.status == MessageStatus.SENT
     handler.on_receipt(receipt('s1', MessageState.UNDELIVERABLE))
     handler.on_receipt(receipt('s1', MessageState.DELIVERED))
     assert message.status == MessageStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_early_part_receipt_counts_once_its_id_is_indexed(
+    store, handler, recorder, monkeypatch
+):
+    monkeypatch.setattr(dlr_module, '_UNKNOWN_WAITS', (0.001, 0.001))
+    message = SMSMessage(
+        source_addr='A',
+        destination_addr='B',
+        message_text='hi',
+        protocol='kannel',
+        dlr_url=recorder.url(),
+        protocol_data={'dlr_mask': 1, 'smsc_message_ids': ['s1', 's2']},
+        status=MessageStatus.SENT,
+    )
+    store.add(message)
+    # Part 1's receipt beats part 2's submit_sm_resp, so its id is not indexed yet
+    handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    store.add_smsc_ids(message, ['s1', 's2'])
+    handler.on_receipt(receipt('s2', MessageState.DELIVERED))
+    assert message.status == MessageStatus.SENT
+    await settle(handler)
+    assert message.status == MessageStatus.DELIVERED
+    assert len(recorder.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_pending_recheck(store, monkeypatch):
+    monkeypatch.setattr(dlr_module, '_UNKNOWN_WAITS', (3600,))
+    handler = DLRHandler(store)
+    await handler.start()
+    handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    (recheck,) = handler._tasks
+    await handler.stop()
+    assert recheck.cancelled()
+    message = sent(store, ['s1'])
+    await asyncio.sleep(0)
+    assert message.status == MessageStatus.SENT
 
 
 def test_expand_dlr_url_is_single_pass_and_quotes():
@@ -103,6 +147,11 @@ def test_expand_dlr_url_is_single_pass_and_quotes():
         'http://x/?id=m-1&s=1&f=a%26b&a=id%3A1%20stat%3ADELIVRD%20%25d'
         '&t=2026-09-26%2012%3A00&T=1790424000&p=%p&s2=%s'
     )
+
+
+def test_expand_dlr_url_keeps_kannel_percent_rules():
+    url = 'a=%%d&b=%d&c=caf%%C3%%A9&e=%x&f=%'
+    assert expand_dlr_url(url, {'d': '1'}) == 'a=%d&b=1&c=caf%C3%A9&e=%x&f=%'
 
 
 class Recorder:
@@ -146,7 +195,8 @@ async def handler(store, monkeypatch):
 
 
 async def settle(handler):
-    await asyncio.gather(*handler._tasks)
+    while handler._tasks:  # a re-check can start a dlr-url fetch
+        await asyncio.gather(*handler._tasks)
 
 
 @pytest.mark.asyncio

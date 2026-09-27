@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from smpp import DeliverSm
+from smpp.client import highlevel as smpp_highlevel
 from smpp.exceptions import SMPPMessageException
 from smpp.gsm import make_parts
 
@@ -20,8 +21,10 @@ class FakeSmppai:
     fail_connect = False
     submit_error: Exception | None = None
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    def __init__(self, host=None, port=None, system_id=None, password=None, **kwargs):
+        self.kwargs = dict(
+            host=host, port=port, system_id=system_id, password=password, **kwargs
+        )
         self.submits: list = []
         self.bound = False
         self.disconnected = False
@@ -62,7 +65,8 @@ def smpp(monkeypatch):
     FakeSmppai.instances = []
     FakeSmppai.fail_connect = False
     FakeSmppai.submit_error = None
-    monkeypatch.setattr(client_module, 'SmppaiClient', FakeSmppai)
+    # smpp.connect() builds its raw client from this name; the real Client wraps it
+    monkeypatch.setattr(smpp_highlevel, 'SMPPClient', FakeSmppai)
     config = SMPPClientConfig(host='h', port=1, system_id='s', password='p')
     return SMPPClient(config)
 
@@ -253,28 +257,78 @@ async def test_lost_connection_ends_the_consumer_quietly(smpp):
     assert inbound.exception() is None
 
 
-@pytest.mark.asyncio
-async def test_rebind_and_disconnect_cancel_the_consumer(smpp):
+async def rebind_unbound(smpp, fake):
+    fake.bound = False
     await smpp.connect()
-    first_inbound = smpp._inbound
-    FakeSmppai.instances[0].bound = False
-    await smpp.connect()
-    await asyncio.sleep(0)
-    assert first_inbound.cancelled()
-    second_inbound = smpp._inbound
-    assert second_inbound is not None and not second_inbound.done()
-    await smpp.disconnect()
-    await asyncio.sleep(0)
-    assert second_inbound.cancelled()
-    assert smpp._inbound is None
 
 
-@pytest.mark.asyncio
-async def test_failed_submit_cancels_the_consumer(smpp):
-    await smpp.connect()
-    inbound = smpp._inbound
+async def failed_submit(smpp, fake):
     FakeSmppai.submit_error = RuntimeError('boom')
     with pytest.raises(RuntimeError):
         await smpp.send_message(msg('hi'))
-    await asyncio.sleep(0)
-    assert inbound.cancelled()
+
+
+async def disconnect(smpp, fake):
+    await smpp.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('drop', [disconnect, failed_submit, rebind_unbound])
+async def test_dropping_a_bind_drains_its_receipts(smpp, drop):
+    receipts = []
+    smpp.on_receipt = receipts.append
+    await smpp.connect()
+    fake, consumer = FakeSmppai.instances[0], smpp._inbound
+    real_disconnect = fake.disconnect
+
+    async def disconnect_with_a_late_receipt():
+        fake.on_deliver_sm(fake, deliver_sm('id:smsc-43 stat:DELIVRD err:000', 4))
+        await real_disconnect()
+
+    fake.disconnect = disconnect_with_a_late_receipt
+    # Queued in smppai's Client, not yet consumed
+    fake.on_deliver_sm(fake, deliver_sm('id:smsc-42 stat:DELIVRD err:000', 4))
+    await drop(smpp, fake)
+    assert [m.receipt.id for m in receipts] == ['smsc-42', 'smsc-43']
+    assert consumer.done() and not consumer.cancelled()
+    assert fake.disconnected
+
+
+async def until(condition):
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError('condition never held')
+
+
+def lose_connection(fake):
+    fake.bound = False  # smppai clears it, then reports the loss
+    fake.on_connection_lost(fake, ConnectionError('gone'))
+
+
+def smsc_unbind(fake):
+    fake.bound = False  # the socket stays open; messages() does not end
+
+
+def startup_bind_failed(fake):
+    FakeSmppai.fail_connect = False  # the SMSC comes back
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outage', [lose_connection, smsc_unbind, startup_bind_failed])
+async def test_rebind_loop_rebinds_without_sends(smpp, monkeypatch, outage):
+    monkeypatch.setattr(client_module, '_REBIND_DELAY', 0.01)
+    FakeSmppai.fail_connect = outage is startup_bind_failed
+    smpp.start()
+    await until(lambda: FakeSmppai.instances)
+    first = FakeSmppai.instances[0]
+    outage(first)
+    await until(lambda: smpp.connected and smpp.client is not first)
+    assert all(not fake.submits for fake in FakeSmppai.instances)
+
+    await smpp.disconnect()
+    assert smpp._keeper is None and not smpp.connected
+    created = len(FakeSmppai.instances)
+    await asyncio.sleep(0.05)
+    assert len(FakeSmppai.instances) == created
