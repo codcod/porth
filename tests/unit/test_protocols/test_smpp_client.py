@@ -235,16 +235,37 @@ def deliver_sm(text: str, esm_class: int) -> DeliverSm:
 
 
 @pytest.mark.asyncio
-async def test_receipts_reach_on_receipt_and_mo_is_dropped(smpp):
-    receipts = []
-    smpp.on_receipt = receipts.append
+async def test_receipts_reach_on_receipt_and_mo_reaches_on_mo(smpp):
+    receipts, mos = [], []
+    smpp.on_receipt, smpp.on_mo = receipts.append, mos.append
     await smpp.connect()
     fake = FakeSmppai.instances[0]
-    fake.on_deliver_sm(fake, deliver_sm('hello', 0))  # MO: dropped
+    fake.on_deliver_sm(fake, deliver_sm('hello', 0))
     fake.on_deliver_sm(fake, deliver_sm('id:smsc-42 stat:DELIVRD err:000', 0x04))
     for _ in range(3):
         await asyncio.sleep(0)
     assert [m.receipt.id for m in receipts] == ['smsc-42']
+    assert [(m.text, m.sender.addr) for m in mos] == [('hello', '5678')]
+    await smpp.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_failing_on_mo_is_logged_and_the_loop_goes_on(smpp, caplog):
+    mos = []
+
+    def on_mo(m):
+        mos.append(m)
+        raise RuntimeError('boom')
+
+    smpp.on_mo = on_mo
+    await smpp.connect()
+    fake = FakeSmppai.instances[0]
+    fake.on_deliver_sm(fake, deliver_sm('one', 0))
+    fake.on_deliver_sm(fake, deliver_sm('two', 0))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert [m.text for m in mos] == ['one', 'two']
+    assert 'Error handling MO' in caplog.text
     await smpp.disconnect()
 
 

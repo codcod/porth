@@ -83,3 +83,65 @@ replaced even when it is part of a percent-encoding, so write a literal `%` in `
 ----
 curl 'http://localhost:13013/cgi-bin/sendsms?to=%2B306900000000&from=porth&text=Hello&dlr-mask=3&dlr-url=http%3A%2F%2Fapp.example%2Fdlr%3Fid%3D%25I%26status%3D%25d'
 ----
+
+== Mobile-originated messages
+
+An SMS a subscriber sends to the service number arrives from the SMSC as a `deliver_sm`
+(reassembled first if it came in parts). {product} forwards it to one application URL,
+`mo.url`, which works like the `get-url` of a Kannel `sms-service`. With `mo.url` unset, each
+MO is logged and dropped. See <<Configuration>>.
+
+{product} replaces these escape codes in `mo.url`, each URL-encoded. The values are the ones
+Kannel 1.4.5 sends:
+
+[cols="1,4",options="header"]
+|===
+| Code | Value
+
+| `%p` | The sender's number. A TON-international number has a leading `+`.
+| `%P` | The number the MO was sent to, with the same `+` rule.
+| `%k` | The first word of the text.
+| `%r` | The words after the first, joined by single spaces.
+| `%a` | All words, joined by single spaces.
+| `%b` | The text as sent, spaces kept.
+| `%t` | The MO's arrival time in UTC, as `YYYY-MM-DD HH:MM:SS`.
+| `%T` | The MO's arrival time as a UNIX timestamp.
+| `%c` | The text's coding: `0` (GSM text) or `2` (UCS-2).
+| `%C` | The text's charset: `UTF-8` or `UTF-16BE`.
+| `%%` | A literal `%`.
+|===
+
+Any other `%` code is left as written.
+
+* GSM text reaches the application as UTF-8. UCS-2 text reaches it as raw UTF-16BE bytes, as
+  in Kannel, so an application that takes UCS-2 MO must read `%C` (or `%c`) to decode it.
+* Words are split on the bytes, as Kannel does. For UCS-2 each word except the last keeps a
+  stray `00` byte, the high byte of the space. A character with a whitespace byte in it (`€`
+  is `20 AC`) also splits a word, so `%k`, `%r` and `%a` may not decode as UTF-16BE: use `%b`
+  for UCS-2 text.
+
+.A `mo.url`
+----
+http://app.example/mo?from=%p&to=%P&text=%a&charset=%C
+----
+
+=== Replies
+
+{product} fetches the URL once with `GET`, with a 30 s timeout. If the application answers
+`200` with a non-empty `text/plain` body and `mo.reply` is on (the default), the body is sent
+back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
+any other message, with no delivery report. A reply longer than one SMS is sent whole as a
+concatenated SMS, where Kannel's default `max-messages = 1` sends only one.
+
+Any other answer sends nothing and is logged: another status, another content type, or an
+empty body (where Kannel would send `<Empty reply from service provider>`). `mo.reply: false`
+never sends a reply, like Kannel's `max-messages = 0`.
+
+=== Delivery guarantee
+
+Forwarding is at-most-once. A failed request (a connection error, a timeout, an error
+status) is not retried. An MO whose request is still running when {product} stops is lost.
+The MO itself is not stored.
+
+Not supported: `post-url`, keywords (one URL takes every MO), and Kannel's `X-Kannel-*`
+headers.

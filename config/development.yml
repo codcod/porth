@@ -15,6 +15,10 @@ delivery:
   retry_delay: 5
   worker_count: 2
 
+mo:
+  # url: "http://localhost:8000/mo?from=%p&to=%P&text=%a&coding=%C"
+  reply: true
+
 # Development-specific settings
 debug: true
 log_level: "DEBUG"

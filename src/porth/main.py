@@ -9,6 +9,7 @@ from aiohttp import web
 from porth.config.settings import HTTPConfig, KannelConfig, Settings, load_settings
 from porth.core.delivery import DeliveryEngine
 from porth.core.dlr import DLRHandler
+from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
 from porth.core.store import MessageStore
 from porth.protocols.http.api import create_http_app
@@ -27,6 +28,7 @@ class SMSGateway:
             self.message_queue, self.message_store, settings
         )
         self.dlr_handler = DLRHandler(self.message_store)
+        self.mo_handler = MOHandler(self.message_queue, self.message_store, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
 
@@ -34,8 +36,9 @@ class SMSGateway:
         """Start all gateway components."""
         # Start delivery engine
         await self.delivery_engine.start()
-        # Before any bind, so the first receipt can already call a dlr-url
+        # Before any bind, so the first receipt or MO can already be handled
         await self.dlr_handler.start()
+        await self.mo_handler.start()
 
         # Start the HTTP API and the Kannel-compatible API, each on its own listener
         await self._serve(
@@ -50,7 +53,9 @@ class SMSGateway:
         # Start SMPP clients (if configured)
         for client_config in self.settings.smpp.clients:
             smpp_client = SMPPClient(
-                client_config, on_receipt=self.dlr_handler.on_receipt
+                client_config,
+                on_receipt=self.dlr_handler.on_receipt,
+                on_mo=self.mo_handler.on_mo,
             )
             self.delivery_engine.smpp_client = smpp_client
             # Binds now; if that fails, the client retries in the background
@@ -83,11 +88,15 @@ class SMSGateway:
             except Exception as e:
                 logging.error(f'Error stopping SMPP client: {e}')
 
-        # After the clients, so no receipt arrives for a closed session
+        # After the clients, so no receipt or MO arrives for a closed session
         try:
             await self.dlr_handler.stop()
         except Exception as e:
             logging.error(f'Error stopping DLR handler: {e}')
+        try:
+            await self.mo_handler.stop()
+        except Exception as e:
+            logging.error(f'Error stopping MO handler: {e}')
 
         # Stop HTTP servers
         for runner in self.servers:

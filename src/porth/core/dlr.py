@@ -30,15 +30,15 @@ _ATTEMPTS = 3
 _UNKNOWN_WAITS = (1, 2, 4, 8)
 
 
-def expand_dlr_url(url: str, values: dict[str, str]) -> str:
-    """Substitute Kannel's %d %I %F %A %t %T in one pass; `%%` is a literal `%`; any
-    other %x stays as written (Kannel's rules)."""
+def expand_url(url: str, values: tp.Mapping[str, str | bytes]) -> str:
+    """Substitute Kannel's escape codes (the keys of values) in one pass; `%%` is a
+    literal `%`; any other %x stays as written (Kannel's rules)."""
 
     def code(m: re.Match) -> str:
         c = m.group(1)
         return '%' if c == '%' else quote(values[c], safe='')
 
-    return re.sub(r'%([dIFAtT%])', code, url)
+    return re.sub(f'%([{re.escape("".join(values))}%])', code, url)
 
 
 class DLRHandler:
@@ -132,7 +132,7 @@ class DLRHandler:
             or not message.protocol_data.get('dlr_mask', 0) & bit
         ):
             return
-        url = expand_dlr_url(
+        url = expand_url(
             message.dlr_url,
             {
                 'd': str(bit),

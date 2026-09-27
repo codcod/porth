@@ -19,6 +19,10 @@ delivery:
   retry_delay: 10
   worker_count: 10
 
+mo:
+  # url: "${MO_URL}"
+  reply: true
+
 # Production-specific settings
 debug: false
 log_level: "INFO"

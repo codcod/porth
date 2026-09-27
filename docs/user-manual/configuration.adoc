@@ -34,6 +34,9 @@ With several entries, only the last one is used. With none, every message ends `
 | `delivery.max_retries` | `3` | Total delivery attempts per message, including the first.
 | `delivery.retry_delay` | `5` | Seconds to wait before each retry.
 | `delivery.worker_count` | `10` | Concurrent delivery workers.
+| `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
+Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
+| `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.
 |===
 
 An unknown key, in the YAML file or as a `PORTH_` variable, stops {product} at startup with
@@ -74,4 +77,8 @@ delivery:
   max_retries: 3
   retry_delay: 5
   worker_count: 10
+
+mo:
+  url: "http://app.example/mo?from=%p&text=%a&charset=%C"
+  reply: true
 ----
