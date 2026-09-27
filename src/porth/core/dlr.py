@@ -24,11 +24,21 @@ _DLR_BIT = {
     MessageStatus.EXPIRED: 2,
 }
 _ATTEMPTS = 3
+# Seconds between look-ups of a receipt's unknown SMSC id: a part's receipt can
+# beat the indexing of the message's ids, which waits for every part's submit_sm_resp.
+# ponytail: one task per unknown receipt, add a cap if an SMSC floods unknown ids
+_UNKNOWN_WAITS = (1, 2, 4, 8)
 
 
 def expand_dlr_url(url: str, values: dict[str, str]) -> str:
-    """Substitute Kannel's %d %I %F %A %t %T in one pass; any other %x stays as written."""
-    return re.sub(r'%([dIFAtT])', lambda m: quote(values[m.group(1)], safe=''), url)
+    """Substitute Kannel's %d %I %F %A %t %T in one pass; `%%` is a literal `%`; any
+    other %x stays as written (Kannel's rules)."""
+
+    def code(m: re.Match) -> str:
+        c = m.group(1)
+        return '%' if c == '%' else quote(values[c], safe='')
+
+    return re.sub(r'%([dIFAtT%])', code, url)
 
 
 class DLRHandler:
@@ -53,27 +63,48 @@ class DLRHandler:
 
     def on_receipt(self, msg: Message) -> None:
         """Apply one parsed receipt (smppai's) to the message it reports on."""
+        assert msg.receipt is not None
+        now = datetime.now(timezone.utc)
+        if self._apply(msg, now):
+            return
+        if not msg.receipt.id:
+            self._ignore(msg)
+            return
+        self._spawn(self._recheck(msg, now))
+
+    async def _recheck(self, msg: Message, now: datetime) -> None:
+        for wait in _UNKNOWN_WAITS:
+            await asyncio.sleep(wait)
+            if self._apply(msg, now):
+                return
+        self._ignore(msg)
+
+    @staticmethod
+    def _ignore(msg: Message) -> None:
+        assert msg.receipt is not None
+        # info, not debug: a systematic SMSC id-format mismatch must show up
+        logger.info(f'Receipt for unknown SMSC id {msg.receipt.id!r} ignored')
+
+    def _apply(self, msg: Message, now: datetime) -> bool:
+        """Apply the receipt to its message; False if its SMSC id is unknown."""
         receipt = msg.receipt
         assert receipt is not None
-        now = datetime.now(timezone.utc)
         smsc_id = receipt.id
         message = self.message_store.find_by_smsc_id(smsc_id) if smsc_id else None
         if message is None or smsc_id is None:
-            # info, not debug: a systematic SMSC id-format mismatch must show up
-            logger.info(f'Receipt for unknown SMSC id {receipt.id!r} ignored')
-            return
+            return False
         if message.status in _TERMINAL:
             logger.debug(
                 f'Receipt {receipt.id} for {message.status.value} message '
                 f'{message.message_id} ignored'
             )
-            return
+            return True
 
         if receipt.state == MessageState.DELIVERED:
             delivered = message.protocol_data.setdefault('delivered_smsc_ids', set())
             delivered.add(smsc_id)
             if not delivered.issuperset(message.protocol_data['smsc_message_ids']):
-                return  # other parts still outstanding
+                return True  # other parts still outstanding
             message.status = MessageStatus.DELIVERED
             message.delivered_at = now.replace(tzinfo=None)  # naive UTC, like sent_at
         elif receipt.state == MessageState.EXPIRED:
@@ -85,10 +116,11 @@ class DLRHandler:
                 f'Receipt {receipt.id} for message {message.message_id}: '
                 f'non-final state {receipt.state!r}'
             )
-            return
+            return True
 
         logger.info(f'Message {message.message_id} {message.status.value} (receipt)')
         self._callback(message, smsc_id, msg.text or '', now)
+        return True
 
     def _callback(
         self, message: SMSMessage, smsc_id: str, text: str, now: datetime
@@ -112,7 +144,11 @@ class DLRHandler:
             },
         )
         # Own task, so smppai's receive loop never waits on the client's server
-        task = asyncio.create_task(self._fetch(message.message_id, url))
+        self._spawn(self._fetch(message.message_id, url))
+
+    def _spawn(self, coro: tp.Coroutine[tp.Any, tp.Any, None]) -> None:
+        """Run coro as a task that stop() cancels."""
+        task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

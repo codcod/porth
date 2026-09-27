@@ -1,9 +1,11 @@
 """SMPP client implementation using smppai."""
 
 import asyncio
+import contextlib
 import logging
 import typing as tp
 
+import smpp
 from smpp import Address, Client, DataCoding, Message, RegisteredDelivery
 from smpp import SMPPClient as SmppaiClient
 from smpp.exceptions import SMPPException, SMPPPDUException
@@ -14,6 +16,10 @@ from porth.core.exceptions import MessageError
 from porth.core.message import SMSMessage
 
 logger = logging.getLogger(__name__)
+
+# Kannel's reconnect-delay default.
+# ponytail: fixed 10 s, make it a setting if an operator needs another
+_REBIND_DELAY = 10.0
 
 
 def choose_data_coding(text: str) -> DataCoding:
@@ -43,7 +49,9 @@ class SMPPClient:
         self.config = config
         self.on_receipt = on_receipt
         self.client: tp.Optional[SmppaiClient] = None
+        self._bind: tp.Optional[contextlib.AsyncExitStack] = None  # smpp.connect()'s
         self._inbound: tp.Optional[asyncio.Task] = None  # the bind's receipt consumer
+        self._keeper: tp.Optional[asyncio.Task] = None  # the rebind loop
         self._connect_lock = asyncio.Lock()
 
     @property
@@ -58,34 +66,53 @@ class SMPPClient:
                 return self.client
             # A client left over from an unbind or lost connection is dead; close it.
             await self._drop()
-            client = SmppaiClient(
-                host=self.config.host,
-                port=self.config.port,
-                system_id=self.config.system_id,
-                password=self.config.password,
-                system_type=self.config.system_type,
-            )
-            # Wrap before the bind, so receipts the SMSC flushes right behind
-            # bind_resp wait in smppai's queue instead of being acked and dropped.
-            inbound = Client(client)
+            stack = contextlib.AsyncExitStack()
             try:
-                await client.connect()
-                await client.bind_transceiver()
-            # BaseException incl. CancelledError: never abandon a half-open bind.
+                # smpp.connect() wraps before the bind, so receipts the SMSC flushes
+                # right behind bind_resp wait in smppai's queue instead of being
+                # acked and dropped; it closes a bind that fails or is cancelled.
+                inbound = await stack.enter_async_context(
+                    smpp.connect(
+                        self.config.host,
+                        self.config.port,
+                        self.config.system_id,
+                        self.config.password,
+                        bind='trx',
+                        system_type=self.config.system_type,
+                    )
+                )
+            # BaseException incl. CancelledError: log it, smppai has closed the bind.
             except BaseException as e:
                 logger.error(f'Failed to connect SMPP client: {e!r}')
-                await self._close(client)
                 raise
 
-            self.client = client
+            self._bind = stack
+            self.client = inbound.raw
             self._inbound = asyncio.create_task(self._consume(inbound))
             logger.info(
                 f'SMPP client connected to {self.config.host}:{self.config.port}'
             )
-            return client
+            return inbound.raw
+
+    def start(self) -> None:
+        """Keep the bind up in the background, so receipts arrive without sends."""
+        self._keeper = asyncio.create_task(self._keep_bound())
+
+    async def _keep_bound(self) -> None:
+        # Not a health monitor: it sends nothing while bound (smppai's enquire_link does)
+        while True:
+            if not self.connected:
+                with contextlib.suppress(Exception):  # connect() logged it
+                    await self.connect()
+            await asyncio.sleep(_REBIND_DELAY)
 
     async def disconnect(self) -> None:
-        """Disconnect from SMSC."""
+        """Stop the rebind loop, then close the bind, draining its receipts."""
+        if self._keeper is not None:
+            self._keeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._keeper
+            self._keeper = None
         await self._drop()
         logger.info('SMPP client disconnected')
 
@@ -138,10 +165,10 @@ class SMPPClient:
         }
 
     async def _consume(self, inbound: Client) -> None:
-        """Hand receipts (parsed by smppai) to on_receipt until the connection is lost.
+        """Hand receipts (parsed by smppai) to on_receipt until the bind ends.
 
-        On porth's own disconnect or an SMSC unbind messages() never ends; cancelling
-        this task is then its only exit.
+        Ends on a lost connection (the loss exception, logged) or once _drop() has
+        closed the bind (after every receipt still queued).
         """
         try:
             async for msg in inbound.messages():
@@ -157,18 +184,15 @@ class SMPPClient:
             logger.warning(f'SMPP inbound stream ended: {e!r}')
 
     async def _drop(self) -> None:
-        """Forget the current bind: stop its receipt consumer, then close it."""
-        client, self.client = self.client, None
-        if self._inbound is not None:
-            self._inbound.cancel()
-            self._inbound = None
-        await self._close(client)
-
-    @staticmethod
-    async def _close(client: tp.Optional[SmppaiClient]) -> None:
-        if client is None:
-            return
-        try:
-            await client.disconnect()
-        except Exception as e:
-            logger.error(f'Error disconnecting SMPP client: {e}')
+        """Forget the current bind: close it, then let its consumer drain its receipts."""
+        stack, consumer = self._bind, self._inbound
+        self._bind = self._inbound = self.client = None
+        if stack is not None:
+            try:
+                await stack.aclose()
+            except Exception as e:
+                logger.error(f'Error disconnecting SMPP client: {e}')
+        if consumer is not None:
+            # shield: a cancelled caller (disconnect() stopping the rebind loop)
+            # must not cancel the drain; the consumer ends on smppai's end marker
+            await asyncio.shield(consumer)

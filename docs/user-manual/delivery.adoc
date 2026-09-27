@@ -47,9 +47,11 @@ Spaces and `-` in numbers are ignored.
 
 {product} opens one transceiver bind to the configured SMSC.
 
-* If the bind fails at startup, the gateway still starts. The next send retries the bind.
+* If the bind fails at startup, the gateway still starts and retries the bind every 10 s.
+* A bind that is lost, or that the SMSC unbinds, is reopened within 10 s, even when nothing
+  is being sent.
 * When a send fails at the transport level (timeout, lost connection, not bound), {product}
-  drops the bind and the next send opens a new one. No background task reconnects.
+  drops the bind. The next send, or the 10 s retry, opens a new one.
 * An error *response* from the SMSC, such as an invalid destination or throttling, keeps the
   bind open. That message goes through the normal retry path.
 * A send that times out is retried, even though the SMSC may already have accepted it. The
@@ -77,9 +79,12 @@ message on as follows:
 the new status on their next poll. For a Kannel `dlr-url` callback, see <<Delivery reports>>.
 
 * A receipt is matched by the exact SMSC message id. A receipt whose id {product} does not
-  know is logged at info and ignored. If every receipt is ignored, the SMSC reports ids in
-  a different format from its `submit_sm` responses.
+  know yet is looked up again for about 15 s, so a part's receipt that arrives before the
+  later parts are submitted still counts. After that, it is logged at info and ignored. If
+  every receipt is ignored, the SMSC reports ids in a different format from its `submit_sm`
+  responses.
 * A receipt for a message that is already `delivered`, `failed` or `expired` is ignored.
 * Receipts arrive only while the bind is up. After a lost bind, the receipts the SMSC holds
-  arrive once the next send rebinds.
+  arrive once {product} rebinds, within 10 s.
+* Receipts already received when {product} closes a bind are still applied.
 * Other inbound messages (mobile-originated SMS) are acknowledged and dropped.
