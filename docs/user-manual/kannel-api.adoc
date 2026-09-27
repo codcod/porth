@@ -128,13 +128,13 @@ http://app.example/mo?from=%p&to=%P&text=%a&charset=%C
 === Replies
 
 {product} fetches the URL once with `GET`, with a 30 s timeout. If the application answers
-`200` with a non-empty `text/plain` body and `mo.reply` is on (the default), the body is sent
-back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
+`200` or `202` with a `text/plain` body that is not empty once leading and trailing whitespace
+is stripped, and `mo.reply` is on (the default), the stripped body is sent back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
 any other message, with no delivery report. A reply longer than one SMS is sent whole as a
 concatenated SMS, where Kannel's default `max-messages = 1` sends only one.
 
 Any other answer sends nothing and is logged: another status, another content type, or an
-empty body (where Kannel would send `<Empty reply from service provider>`). `mo.reply: false`
+empty or whitespace-only body (where Kannel would send `<Empty reply from service provider>`). `mo.reply: false`
 never sends a reply, like Kannel's `max-messages = 0`.
 
 === Delivery guarantee

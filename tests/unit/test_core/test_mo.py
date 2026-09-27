@@ -131,6 +131,12 @@ async def test_text_plain_reply_is_queued_and_stored():
     assert store.get(reply.message_id) is reply
 
 
+@pytest.mark.asyncio
+async def test_202_reply_is_sent_with_blanks_stripped():
+    _, queue, _ = await forward(response=web.Response(text=' Thanks\n', status=202))
+    assert (await queue.get()).message_text == 'Thanks'
+
+
 def closed_port_url() -> str:
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -142,12 +148,13 @@ def closed_port_url() -> str:
     'kwargs',
     [
         dict(response=web.Response(text='')),
+        dict(response=web.Response(text=' \n')),
         dict(response=web.Response(text='<p>Thanks</p>', content_type='text/html')),
         dict(response=web.Response(text='Thanks', status=500)),
         dict(url=closed_port_url()),
         dict(reply=False),
     ],
-    ids=['empty', 'html', '500', 'connection-error', 'reply-off'],
+    ids=['empty', 'blank', 'html', '500', 'connection-error', 'reply-off'],
 )
 async def test_no_reply_is_sent(kwargs):
     _, queue, _ = await forward(**kwargs)

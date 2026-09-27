@@ -101,14 +101,15 @@ class MOHandler:
         sender, body = msg.sender.addr, ''
         try:
             async with self._session.get(url) as response:
-                if response.status != 200:
+                if response.status not in (200, 202):  # Kannel takes both
                     why = f'HTTP {response.status}'
                 elif response.content_type != 'text/plain':
                     why = f'content type {response.content_type}'
                 elif not self.config.reply:
                     why = 'mo.reply is off'
                 else:
-                    body = await response.text()
+                    # Kannel strips blanks, so a whitespace-only body is empty
+                    body = (await response.text()).strip()
                     why = '' if body else 'empty body'
         except Exception as e:  # operator-supplied URL: anything can go wrong
             logger.warning(f'MO from {sender}: application request failed: {e!r}')
