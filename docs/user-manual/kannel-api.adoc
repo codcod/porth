@@ -13,7 +13,8 @@ the host it points at.
 | Parameter | Required | Meaning
 
 | `to` | yes | Recipient numbers, separated by spaces. Each becomes its own message. A number
-with any character other than `0123456789+-` is dropped, as in Kannel.
+with any character other than `0123456789+-` is dropped, and a repeated number is sent once,
+as in Kannel.
 | `text` | yes | Message text.
 | `from` | yes, unless `kannel.default_sender` is set | Sender address. Without it, the message
 comes from `kannel.default_sender`.
@@ -37,8 +38,9 @@ A queued message returns `200` with a `text/plain` body:
 Message-ID: 3f1c…
 ----
 
-With several recipients there is one `Message-ID` line per message, in `to` order. The
-request is accepted or refused whole.
+With several recipients there is one `Message-ID` line per message, in `to` order once
+dropped and repeated numbers are left out, so there can be fewer lines than numbers in `to`.
+The request is accepted or refused whole.
 
 `200` means the messages were queued, not sent. A `to` with no valid number, a missing `text`,
 or a missing `from` with no `kannel.default_sender` returns `400` with

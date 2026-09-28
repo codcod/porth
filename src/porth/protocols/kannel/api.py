@@ -37,14 +37,15 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         # Parse query parameters (Kannel style)
         params = request.query
 
-        # Kannel sends to every space-separated number, silently dropping any
-        # with a character outside sendsms-chars
+        # Kannel sends once to every distinct space-separated number, silently
+        # dropping any with a character outside sendsms-chars
         recipients = []
         for to in params.get('to', '').split():
             if _TO_CHARS.issuperset(to):
                 recipients.append(to)
             else:
                 logger.info(f'Kannel API: dropping recipient {to!r}')
+        recipients = list(dict.fromkeys(recipients))
         if not recipients:
             raise ValueError('no valid recipient in to')
 

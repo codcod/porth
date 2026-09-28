@@ -88,6 +88,20 @@ async def test_sendsms_drops_invalid_recipients(kannel):
 
 
 @pytest.mark.asyncio
+async def test_sendsms_sends_a_repeated_number_once(kannel):
+    client, queue = kannel
+    resp = await client.get(
+        '/cgi-bin/sendsms',
+        params={**PARAMS, 'to': '306900000010 306900000011 306900000010'},
+    )
+    assert resp.status == 200
+    assert (await resp.text()).count('Message-ID:') == 2
+    messages = [await queue.get(), await queue.get()]
+    assert [m.destination_addr for m in messages] == ['306900000010', '306900000011']
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
 async def test_sendsms_rejects_when_no_valid_recipient(kannel):
     client, queue = kannel
     resp = await client.get('/cgi-bin/sendsms', params={**PARAMS, 'to': 'abc'})
@@ -97,15 +111,22 @@ async def test_sendsms_rejects_when_no_valid_recipient(kannel):
 
 
 @pytest.mark.asyncio
-async def test_sendsms_missing_from_takes_the_default_sender(uow_factory):
+@pytest.mark.parametrize(
+    'sender, expected', [(None, 'ACME'), ('', 'ACME'), ('porth', 'porth')]
+)
+async def test_sendsms_default_sender_fills_only_a_missing_from(
+    uow_factory, sender, expected
+):
     app = create_kannel_app(
         RecordingQueue(uow_factory), uow_factory, default_sender='ACME'
     )
     async with TestClient(TestServer(app)) as client:
         params = {'to': '306900000015', 'text': 'hi'}
+        if sender is not None:
+            params['from'] = sender
         resp = await client.get('/cgi-bin/sendsms', params=params)
         assert resp.status == 200
-        assert (await app['message_queue'].get()).source_addr == 'ACME'
+        assert (await app['message_queue'].get()).source_addr == expected
 
 
 @pytest.mark.asyncio
