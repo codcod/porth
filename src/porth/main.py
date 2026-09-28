@@ -67,7 +67,11 @@ class SMSGateway:
             self.settings.http,
         )
         await self._serve(
-            create_kannel_app(self.message_queue, self.uow_factory),
+            create_kannel_app(
+                self.message_queue,
+                self.uow_factory,
+                default_sender=self.settings.kannel.default_sender,
+            ),
             self.settings.kannel,
         )
 

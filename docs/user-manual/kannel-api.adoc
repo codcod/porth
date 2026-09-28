@@ -12,9 +12,12 @@ the host it points at.
 |===
 | Parameter | Required | Meaning
 
-| `to` | yes | Recipient address. One recipient only: a space-separated list returns `400`.
+| `to` | yes | Recipient numbers, separated by spaces. Each becomes its own message. A number
+with any character other than `0123456789+-` is dropped, and a repeated number is sent once,
+as in Kannel.
 | `text` | yes | Message text.
-| `from` | yes | Sender address. {product} has no default sender.
+| `from` | yes, unless `kannel.default_sender` is set | Sender address. Without it, the message
+comes from `kannel.default_sender`.
 | `dlr-url` | no | URL to fetch with the message's final outcome. See <<Delivery reports>>.
 | `dlr-mask` | no | Which outcomes fetch `dlr-url`: `1` delivered, `2` not delivered, or
 their sum. Without it, no callback is made.
@@ -35,7 +38,12 @@ A queued message returns `200` with a `text/plain` body:
 Message-ID: 3f1c…
 ----
 
-`200` means the message was queued, not sent. A missing `to`, `from` or `text` returns `400` with
+With several recipients there is one `Message-ID` line per message, in `to` order once
+dropped and repeated numbers are left out, so there can be fewer lines than numbers in `to`.
+The request is accepted or refused whole.
+
+`200` means the messages were queued, not sent. A `to` with no valid number, a missing `text`,
+or a missing `from` with no `kannel.default_sender` returns `400` with
 `3: Failed to send SMS: <reason>`.
 
 == Delivery reports

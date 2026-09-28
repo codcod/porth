@@ -19,6 +19,7 @@ class HTTPConfig:
 class KannelConfig:
     host: str = '0.0.0.0'
     port: int = 13013  # smsbox's sendsms default
+    default_sender: tp.Optional[str] = None  # Kannel's global-sender
 
 
 @dataclasses.dataclass(kw_only=True)
