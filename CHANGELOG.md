@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (default 13013, smsbox's default). `to` (one recipient), `from` and `text` are required;
   `username` and `password` are ignored (POR-008).
 - `GET /api/v1/sms/status/{message_id}` returns the message's real status and timestamps from
-  an in-memory message store, and `404` for an unknown id. Before, it answered `pending` for
+  the message store, and `404` for an unknown id. Before, it answered `pending` for
   any id (POR-009).
 - Text longer than one SMS is sent as a concatenated SMS (UDH), up to 255 parts. If a part
   fails, the whole message is retried (POR-006).
@@ -29,9 +29,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `%k`, `%r`, `%a`, `%b`, `%t`, `%T`, `%c` and `%C` substituted as Kannel 1.4.5 does. A
   non-blank `text/plain` `200` or `202` answer, stripped of surrounding whitespace, is sent back to the subscriber as an SMS unless
   `mo.reply` is off (POR-015).
+- Messages, their status, receipt correlation and pending `dlr-url` calls persist in
+  PostgreSQL (schema `porth`) across restart. A message is stored before it is accepted; on
+  startup, messages not yet sent are queued again and unfinished `dlr-url` calls are made
+  again. Sent messages are not resent. The database is the new, required `db` setting
+  (`PORTH_DB`); `make db-up` starts one and `make migrate` creates its tables (POR-018).
 
 **Changed**
 
+- Python 3.13 or later is required (POR-018).
 - Addresses carry their SMPP TON/NPI: `+<digits>` is sent as international/ISDN without the
   `+`, and a non-numeric sender as alphanumeric. Before, every address went out as given with
   TON/NPI 0 (POR-011).

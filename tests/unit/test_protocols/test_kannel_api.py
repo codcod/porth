@@ -3,15 +3,18 @@
 import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
+from sqlalchemy.exc import SQLAlchemyError
 
-from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from porth.core.message import MessageStatus
 from porth.protocols.kannel.api import create_kannel_app
+from tests.unit.test_protocols.test_http_api import RecordingQueue
+
+PARAMS = {'to': '+306900000000', 'from': 'porth', 'text': 'hi'}
 
 
 @pytest_asyncio.fixture
-async def kannel():
-    app = create_kannel_app(MessageQueue(), MessageStore())
+async def kannel(uow_factory):
+    app = create_kannel_app(RecordingQueue(uow_factory), uow_factory)
     async with TestClient(TestServer(app)) as client:
         yield client, app['message_queue']
 
@@ -35,7 +38,10 @@ async def test_sendsms_queues_the_message(kannel):
     assert queue.qsize() == 1
     message = await queue.get()
     message_id = text.split('Message-ID: ')[1]
-    assert client.app['message_store'].get(message_id) is message
+    assert message.message_id == message_id
+    stored = client.app['uow_factory'].repo.messages[message_id]
+    assert stored.status == MessageStatus.QUEUED
+    assert queue.committed_at_put == [True]
     assert message.protocol == 'kannel'
     assert message.destination_addr == '+306900000000'
     assert message.message_text == 'hi'
@@ -74,4 +80,14 @@ async def test_sendsms_other_methods_are_not_allowed(kannel, method):
         method, '/cgi-bin/sendsms', params={'to': '+306900000000', 'text': 'hi'}
     )
     assert resp.status == 405
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_failed_commit_is_503_and_queues_nothing(kannel, uow_factory):
+    client, queue = kannel
+    uow_factory.fail = SQLAlchemyError('database down')
+    resp = await client.get('/cgi-bin/sendsms', params=PARAMS)
+    assert resp.status == 503
+    assert (await resp.text()).startswith('3: Failed to send SMS')
     assert queue.empty()

@@ -14,8 +14,9 @@ from smpp import Address, DataCoding, Message, TonType
 from porth.config.settings import MOConfig
 from porth.core.dlr import expand_url
 from porth.core.mo import MOHandler, mo_values
+from porth.core.message import MessageStatus
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from tests.conftest import FakeUowFactory
 
 NOW = datetime(2026, 9, 27, 10, 28, 44, tzinfo=timezone.utc)
 TEMPLATE = 'p=%p&P=%P&k=%k&r=%r&a=%a&b=%b&t=%t&T=%T&c=%c&C=%C'
@@ -98,17 +99,18 @@ class App:
         return self.response
 
 
-async def forward(response=None, reply=True, url=None):
+async def forward(response=None, reply=True, url=None, fail=None):
     """Hand one MO to a started MOHandler; return (app, queue, store)."""
     app = App(response or web.Response(text='Thanks'))
     web_app = web.Application()
     web_app.router.add_get('/mo', app)
     server = TestServer(web_app)
     await server.start_server()
-    queue, store = MessageQueue(), MessageStore()
+    queue, uow_factory = MessageQueue(), FakeUowFactory()
+    uow_factory.fail = fail
     if url is None:
         url = str(server.make_url('/mo')) + '?k=%k'
-    handler = MOHandler(queue, store, MOConfig(url=url or None, reply=reply))
+    handler = MOHandler(queue, uow_factory, MOConfig(url=url or None, reply=reply))
     await handler.start()
     try:
         handler.on_mo(mo('306900000001'))
@@ -116,7 +118,7 @@ async def forward(response=None, reply=True, url=None):
     finally:
         await handler.stop()
         await server.close()
-    return app, queue, store
+    return app, queue, uow_factory.repo
 
 
 @pytest.mark.asyncio
@@ -128,7 +130,9 @@ async def test_text_plain_reply_is_queued_and_stored():
     assert (reply.source_addr, reply.destination_addr) == ('1234', '+306900000001')
     assert reply.message_text == 'Thanks'
     assert reply.protocol == 'kannel' and not reply.dlr_requested
-    assert store.get(reply.message_id) is reply
+    stored = store.messages[reply.message_id]
+    assert stored.status == MessageStatus.QUEUED
+    assert stored.message_text == 'Thanks'
 
 
 @pytest.mark.asyncio
@@ -165,3 +169,10 @@ async def test_no_reply_is_sent(kwargs):
 async def test_unset_url_makes_no_request():
     app, queue, _ = await forward(url='')
     assert app.requests == [] and queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_reply_not_stored_is_not_sent(caplog):
+    _, queue, store = await forward(fail=OSError('database down'))
+    assert queue.empty()
+    assert 'reply not stored, not sent' in caplog.text

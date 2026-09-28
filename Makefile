@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build
+.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -68,9 +68,9 @@ test-unit: ## Run unit tests only
 	@echo "Running unit tests..."
 	$(UV) run pytest $(TEST_DIR)/unit -v
 
-test-integration: ## Run integration tests only
+test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test database)
 	@echo "Running integration tests..."
-	$(UV) run pytest $(TEST_DIR)/integration -v
+	RUN_INTEGRATION_TESTS=1 $(UV) run pytest $(TEST_DIR)/integration -v
 
 test-coverage: ## Run tests with coverage report
 	@echo "Running tests with coverage..."
@@ -80,15 +80,15 @@ test-coverage: ## Run tests with coverage report
 # Code Quality
 lint: ## Run linting with ruff
 	@echo "Running linter..."
-	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR)
+	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR) migrations/env.py
 
 format: ## Format code with ruff
 	@echo "Formatting code..."
-	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR)
+	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) migrations/env.py
 
 format-check: ## Check code formatting without making changes
 	@echo "Checking code formatting..."
-	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR)
+	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) migrations/env.py
 
 type-check: ## Run type checking with mypy
 	@echo "Running type checks..."
@@ -104,6 +104,23 @@ run: ## Run the application
 dev-run: create-env ## Run the application in development mode
 	@echo "Starting Porth SMS Gateway in development mode..."
 	PORTH_CONFIG_FILE=config/development.yml $(UV) run $(PYTHON) -m $(PROJECT_NAME).main
+
+# Database (the DSN is the `db` setting, read as the gateway reads it: the
+# PORTH_CONFIG_FILE YAML's db: wins, else PORTH_DB; with neither set,
+# config/development.yml)
+DB_ENV := $(if $(or $(PORTH_CONFIG_FILE),$(PORTH_DB)),,PORTH_CONFIG_FILE=config/development.yml)
+
+db-up: ## Start porth's PostgreSQL (docker compose)
+	docker compose up -d --wait postgres
+
+migrate: ## Apply database migrations (a one-off step, before every start after an upgrade)
+	$(DB_ENV) $(UV) run alembic upgrade head
+
+migration: ## Generate a migration: make migration name="..."
+	$(DB_ENV) $(UV) run alembic revision --autogenerate -m "$(name)"
+
+downgrade: ## Revert migrations: make downgrade [rev=-1]
+	$(DB_ENV) $(UV) run alembic downgrade $(or $(rev),-1)
 
 # Configuration
 config-check: ## Validate configuration files

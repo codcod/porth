@@ -61,6 +61,9 @@ class Settings:
     delivery: DeliveryConfig = dataclasses.field(default_factory=DeliveryConfig)
     mo: MOConfig = dataclasses.field(default_factory=MOConfig)
 
+    # PostgreSQL DSN (postgresql+asyncpg://...); required to start the gateway
+    db: tp.Optional[str] = None
+
     # Configuration and logging
     config_file: tp.Optional[str] = None
     log_level: str = 'INFO'

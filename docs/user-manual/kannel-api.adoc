@@ -76,6 +76,8 @@ replaced even when it is part of a percent-encoding, so write a literal `%` in `
 * The callback is an HTTP `GET`. Any `2xx` answer is success.
 * {product} makes up to 3 attempts, 1 s and then 2 s apart, each with a 10 s timeout, and then
   gives up.
+* A callback still being attempted when {product} stops is made again after the next start,
+  so the client can receive the same callback twice (as with Kannel).
 * There is one callback per message, including a long message sent in several parts.
 * There is no callback for a message that fails before the SMSC accepts it (POR-005).
 

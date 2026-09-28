@@ -1,7 +1,12 @@
-# Reference Kannel wired to an smppai SMSC, for comparing porth's Kannel API
+# porth's PostgreSQL (porth itself runs on the host, not in compose):
+#
+#   docker compose up -d --wait postgres
+#   make migrate
+#
+# And a reference Kannel wired to an smppai SMSC, for comparing porth's Kannel API
 # against the real thing. Kannel sendsms on host :14013 (porth uses :13013).
 #
-#   docker compose up --build
+#   docker compose up --build bearerbox smsbox
 #   curl 'http://localhost:14013/cgi-bin/sendsms?username=tester&password=foobar&from=ACME&to=306900000000&text=hi'
 
 x-kannel: &kannel
@@ -16,6 +21,21 @@ x-kannel: &kannel
       target: /etc/kannel/kannel.conf
 
 services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: porth
+      POSTGRES_PASSWORD: porth
+      POSTGRES_DB: porth
+    # POSTGRES_PORT: another host port. Not PORTH_*: porth rejects unknown PORTH_ variables.
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    volumes: [postgres-data:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porth -d porth"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
   smppai:
     build:
       dockerfile_inline: |
@@ -35,6 +55,9 @@ services:
     command: ["smsbox", "/etc/kannel/kannel.conf"]
     depends_on: [bearerbox]
     ports: ["14013:13013"]
+
+volumes:
+  postgres-data:
 
 configs:
   kannel.conf:

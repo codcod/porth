@@ -246,10 +246,19 @@ def deliver_sm(text: str, esm_class: int) -> DeliverSm:
     )
 
 
+def recorder(into: list):
+    """An on_receipt that records each receipt (awaited, as DLRHandler's is)."""
+
+    async def on_receipt(m):
+        into.append(m)
+
+    return on_receipt
+
+
 @pytest.mark.asyncio
 async def test_receipts_reach_on_receipt_and_mo_reaches_on_mo(smpp):
     receipts, mos = [], []
-    smpp.on_receipt, smpp.on_mo = receipts.append, mos.append
+    smpp.on_receipt, smpp.on_mo = recorder(receipts), mos.append
     await smpp.connect()
     fake = FakeSmppai.instances[0]
     fake.on_deliver_sm(fake, deliver_sm('hello', 0))
@@ -309,7 +318,7 @@ async def disconnect(smpp, fake):
 @pytest.mark.parametrize('drop', [disconnect, failed_submit, rebind_unbound])
 async def test_dropping_a_bind_drains_its_receipts(smpp, drop):
     receipts = []
-    smpp.on_receipt = receipts.append
+    smpp.on_receipt = recorder(receipts)
     await smpp.connect()
     fake, consumer = FakeSmppai.instances[0], smpp._inbound
     real_disconnect = fake.disconnect
@@ -365,3 +374,34 @@ async def test_rebind_loop_rebinds_without_sends(smpp, monkeypatch, outage):
     created = len(FakeSmppai.instances)
     await asyncio.sleep(0.05)
     assert len(FakeSmppai.instances) == created
+
+
+@pytest.mark.asyncio
+async def test_disconnect_waits_for_a_drain_the_rebind_loop_left(smpp, monkeypatch):
+    """POR-013 review F3: disconnect() cancels the rebind loop inside _drop(); the
+    shielded drain goes on, and disconnect() must wait for it."""
+    monkeypatch.setattr(client_module, '_REBIND_DELAY', 0.01)
+    started, release, stored = asyncio.Event(), asyncio.Event(), []
+
+    async def on_receipt(m):  # a slow database write
+        started.set()
+        await release.wait()
+        stored.append(m.receipt.id)
+
+    smpp.on_receipt = on_receipt
+    smpp.start()
+    await until(lambda: smpp.connected)
+    fake = FakeSmppai.instances[0]
+    fake.on_deliver_sm(fake, deliver_sm('id:smsc-42 stat:DELIVRD err:000', 4))
+    await started.wait()
+    fake.bound = False  # the rebind loop drops the bind and waits on the drain
+    await until(lambda: fake.disconnected)
+    await asyncio.sleep(0.02)
+
+    stop = asyncio.create_task(smpp.disconnect())
+    await asyncio.sleep(0.05)
+    assert not stop.done()
+    release.set()
+    await stop
+    assert stored == ['smsc-42']
+    assert smpp._inbound is None

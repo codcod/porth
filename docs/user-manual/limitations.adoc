@@ -10,7 +10,12 @@ The ticket reference identifies the planned change.
 | Kannel-compatible `sendsms` API | `GET` only. Parameters beyond `to`, `from`, `text`,
 `dlr-url` and `dlr-mask` are ignored. Response codes are not yet Kannel's exact table. | POR-005
 | Receipt timeout | A message with no receipt never becomes `expired`. | POR-003
-| Message records | Kept in memory until restart. Nothing is evicted. | POR-003
+| Message records | Kept in PostgreSQL. Nothing is evicted. | POR-003
+| Restart window | A message the SMSC accepted just before a crash, before {product}
+recorded it as `sent`, is sent again. So is one {product} could not record as `sent` because
+the database was unavailable for its retries (about 7 s); its receipts are also ignored. A receipt that arrives before {product} has recorded
+its message as `sent` (an early part of a long message, or a very fast SMSC) waits in memory,
+up to about 15 s; one still waiting at a crash is lost, and that message stays `sent`. | —
 | Configuration | YAML values are not expanded from the environment, and the environment
 cannot override a YAML file. `log_level` is ignored. | POR-012
 |===

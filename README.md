@@ -17,6 +17,10 @@ cd porth
 # Setup development environment
 make dev
 
+# PostgreSQL (Docker) and porth's tables
+make db-up
+make migrate
+
 # Run the application
 make dev-run
 ```

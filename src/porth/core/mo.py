@@ -10,9 +10,9 @@ from smpp import Address, DataCoding, Message, TonType
 
 from porth.config.settings import MOConfig
 from porth.core.dlr import expand_url
-from porth.core.message import SMSMessage
+from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +59,13 @@ class MOHandler:
     """Fetches the MO URL once per MO (at-most-once) and queues a text/plain reply."""
 
     def __init__(
-        self, message_queue: MessageQueue, message_store: MessageStore, config: MOConfig
+        self,
+        message_queue: MessageQueue,
+        uow_factory: tp.Callable[[], AbstractUnitOfWork],
+        config: MOConfig,
     ):
         self.message_queue = message_queue
-        self.message_store = message_store
+        self.uow_factory = uow_factory
         self.config = config
         self._session: tp.Optional[aiohttp.ClientSession] = None
         self._tasks: set[asyncio.Task] = set()
@@ -124,8 +127,15 @@ class MOHandler:
             protocol='kannel',
             protocol_data={'dlr_mask': 0},
             dlr_requested=False,
+            status=MessageStatus.QUEUED,
         )
-        # Store before queueing, as the submit handlers do
-        self.message_store.add(reply)
+        # Durable before queueing, as the submit handlers do
+        try:
+            async with self.uow_factory() as uow:
+                await uow.messages.add(reply)
+                await uow.commit()
+        except Exception as e:
+            logger.warning(f'MO from {sender}: reply not stored, not sent: {e!r}')
+            return
         await self.message_queue.put(reply)
         logger.info(f'MO from {sender}: reply {reply.message_id} queued')

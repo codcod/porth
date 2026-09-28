@@ -1,24 +1,26 @@
 """Kannel-compatible API implementation."""
 
 import logging
+import typing as tp
 
 from aiohttp import web
+from sqlalchemy.exc import SQLAlchemyError
 
-from porth.core.message import SMSMessage
+from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from porth.service_layer.unit_of_work import AbstractUnitOfWork
 from porth.protocols.http.api import text_field
 
 logger = logging.getLogger(__name__)
 
 
 def create_kannel_app(
-    message_queue: MessageQueue, message_store: MessageStore
+    message_queue: MessageQueue, uow_factory: tp.Callable[[], AbstractUnitOfWork]
 ) -> web.Application:
     """Create the aiohttp application serving Kannel's GET /cgi-bin/sendsms."""
     app = web.Application()
     app['message_queue'] = message_queue
-    app['message_store'] = message_store
+    app['uow_factory'] = uow_factory
     app.router.add_get('/cgi-bin/sendsms', kannel_send_sms, allow_head=False)
     return app
 
@@ -48,18 +50,8 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             protocol='kannel',
             protocol_data={'dlr_mask': dlr_mask},
             dlr_url=params.get('dlr-url'),
+            status=MessageStatus.QUEUED,
         )
-
-        # Store before queueing, so a poll right after the response finds it
-        request.app['message_store'].add(message)
-        await request.app['message_queue'].put(message)
-
-        # Return Kannel-style response
-        response_text = f'0: Accepted for delivery\nMessage-ID: {message.message_id}'
-
-        logger.info(f'Kannel API: Queued message {message.message_id}')
-        return web.Response(text=response_text, content_type='text/plain')
-
     except Exception as e:
         logger.error(f'Error in Kannel SMS send: {e}')
         return web.Response(
@@ -67,3 +59,23 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             content_type='text/plain',
             status=400,
         )
+
+    # Durable before it is accepted (design.md §4.6), so a restart still sends it
+    try:
+        async with request.app['uow_factory']() as uow:
+            await uow.messages.add(message)
+            await uow.commit()
+    except (SQLAlchemyError, OSError) as e:  # OSError: database unreachable
+        logger.error(f'Kannel API: message not stored, so not accepted: {e!r}')
+        return web.Response(
+            text='3: Failed to send SMS: message store unavailable',
+            content_type='text/plain',
+            status=503,
+        )
+    await request.app['message_queue'].put(message)
+
+    logger.info(f'Kannel API: Queued message {message.message_id}')
+    return web.Response(
+        text=f'0: Accepted for delivery\nMessage-ID: {message.message_id}',
+        content_type='text/plain',
+    )
