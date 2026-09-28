@@ -24,7 +24,6 @@ oversights:
 
 * Authentication on any ingress API.
 * TLS on any transport.
-* Message persistence across restarts: the queue and message state live in memory.
 * Accepting inbound SMPP binds (an SMSC role).
 * Rate limiting, metrics export, tracing, and hot-reloadable configuration.
 

@@ -51,7 +51,7 @@ class SMPPClient:
     def __init__(
         self,
         config: SMPPClientConfig,
-        on_receipt: tp.Optional[tp.Callable[[Message], None]] = None,
+        on_receipt: tp.Optional[tp.Callable[[Message], tp.Awaitable[None]]] = None,
         on_mo: tp.Optional[tp.Callable[[Message], None]] = None,
     ):
         self.config = config
@@ -177,8 +177,8 @@ class SMPPClient:
         }
 
     async def _consume(self, inbound: Client) -> None:
-        """Hand receipts (parsed by smppai) to on_receipt and MO (reassembled by
-        smppai) to on_mo until the bind ends.
+        """Hand receipts (parsed by smppai) to on_receipt, awaited, and MO
+        (reassembled by smppai) to on_mo until the bind ends.
 
         Ends on a lost connection (the loss exception, logged) or once _drop() has
         closed the bind (after every message still queued).
@@ -194,7 +194,9 @@ class SMPPClient:
                     logger.info(f'Inbound {kind} from {msg.sender} dropped')
                     continue
                 try:
-                    handler(msg)
+                    result = handler(msg)
+                    if result is not None:  # on_receipt's: the receipt is stored
+                        await result
                 except Exception:
                     logger.exception(f'Error handling {kind}')
         except Exception as e:
@@ -203,7 +205,7 @@ class SMPPClient:
     async def _drop(self) -> None:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
         stack, consumer = self._bind, self._inbound
-        self._bind = self._inbound = self.client = None
+        self._bind = self.client = None
         if stack is not None:
             try:
                 await stack.aclose()
@@ -211,5 +213,9 @@ class SMPPClient:
                 logger.error(f'Error disconnecting SMPP client: {e}')
         if consumer is not None:
             # shield: a cancelled caller (disconnect() stopping the rebind loop)
-            # must not cancel the drain; the consumer ends on smppai's end marker
+            # must not cancel the drain; the consumer ends on smppai's end marker.
+            # _inbound is cleared only once it has, so disconnect()'s own _drop()
+            # still waits for a drain the cancelled loop left running.
             await asyncio.shield(consumer)
+            if self._inbound is consumer:
+                self._inbound = None

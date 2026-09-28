@@ -2,8 +2,11 @@
 
 == Requirements
 
-* Python 3.11 or later (development uses 3.13, pinned in `.python-version`).
+* Python 3.13 or later (pinned in `.python-version`).
 * https://github.com/astral-sh/uv[uv].
+* PostgreSQL. `make db-up` starts one in Docker (`compose.yaml`, user, password and
+  database all `porth`, on port 5432). To use another host port, set `POSTGRES_PORT` and
+  change the port in the `db` DSN to match (see <<Configuration>>).
 * Network access from {product} to the upstream SMSC's SMPP port.
 
 {product} installs its SMPP library, `smppai`, from its Git repository. The library is
@@ -16,7 +19,14 @@ imported as `smpp`.
 git clone git@github.com:codcod/porth.git
 cd porth
 make dev        # uv sync --dev, and a .env pointing at config/development.yml
+make db-up      # PostgreSQL in Docker
+make migrate    # create porth's tables (schema porth)
 ----
+
+`make migrate` runs `alembic upgrade head` against the database in the `db` setting (see
+<<Configuration>>). It is a one-off step: {product} never migrates at startup, so run it
+again before every start after an upgrade. With neither `PORTH_CONFIG_FILE` nor `PORTH_DB`
+set, it uses `config/development.yml`.
 
 == Run
 
@@ -27,10 +37,26 @@ make dev-run    # same, with PORTH_CONFIG_FILE=config/development.yml
 ----
 
 The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).
-It starts even when the SMSC is unreachable; the first send retries the bind.
+It starts even when the SMSC is unreachable; the first send retries the bind. It does not
+start without its database: an unset `db` or an unreachable PostgreSQL stops it with an
+error.
 
 Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown stops the delivery workers, unbinds
-from the SMSC, and closes the HTTP listener. Messages still in the queue are lost.
+from the SMSC, and closes the HTTP listener.
+
+== What a restart keeps
+
+Every message {product} accepts is written to PostgreSQL before the API answers, and every
+status change after that. After a stop or a crash, the next start:
+
+* sends the messages that were not sent yet (`pending` or `queued`, including those waiting
+  to retry), oldest first. A message already `sent` is not sent again.
+* still matches later delivery receipts to their messages.
+* makes again any Kannel `dlr-url` call that was not finished, so a client can receive the
+  same callback twice.
+
+A message the SMSC accepted just before a crash, before {product} recorded it as `sent`, is
+sent again. See <<Limitations>>.
 
 == Check that it is up
 

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import typing as tp
-from datetime import datetime
+from datetime import datetime, timezone
 
 from smpp import CommandStatus
 from smpp.exceptions import SMPPMessageException
@@ -12,7 +12,7 @@ from porth.config.settings import DeliveryConfig, Settings
 from porth.core.exceptions import DeliveryError, MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 if tp.TYPE_CHECKING:
     from porth.protocols.smpp.client import SMPPClient
@@ -44,11 +44,11 @@ class DeliveryEngine:
     def __init__(
         self,
         message_queue: MessageQueue,
-        message_store: MessageStore,
+        uow_factory: tp.Callable[[], AbstractUnitOfWork],
         settings: Settings,
     ):
         self.message_queue = message_queue
-        self.message_store = message_store
+        self.uow_factory = uow_factory
         self.settings = settings
         self.workers: list[asyncio.Task] = []
         self.running = False
@@ -78,7 +78,8 @@ class DeliveryEngine:
 
         self.running = False
 
-        # Cancel all workers and pending retries (a message waiting to retry is dropped)
+        # Cancel all workers and pending retries (a message waiting to retry stays
+        # queued in the store, and the next start queues it again)
         tasks = [*self.workers, *self._retries]
         for task in tasks:
             task.cancel()
@@ -129,17 +130,11 @@ class DeliveryEngine:
 
             result = await self.smpp_client.send_message(message)
 
-            message.status = MessageStatus.SENT
-            message.sent_at = datetime.utcnow()
-            ids = result['smsc_message_ids']
-            message.protocol_data['smsc_message_ids'] = ids
-            self.message_store.add_smsc_ids(message, ids)
-
-            logger.info(f'Message {message.message_id} sent')
-
         except MessageError as e:
             logger.error(f'Message {message.message_id} rejected permanently: {e}')
             message.status = MessageStatus.FAILED
+            await self._save(message)
+            return
 
         except Exception as e:
             if (
@@ -152,14 +147,48 @@ class DeliveryEngine:
                     f'({_status_name(e.command_status)}), not retried'
                 )
                 message.status = MessageStatus.FAILED
+                await self._save(message)
                 return
             logger.error(f'Failed to deliver message {message.message_id}: {e}')
             await self._handle_delivery_failure(message, str(e))
+            return
+
+        message.status = MessageStatus.SENT
+        message.sent_at = datetime.now(timezone.utc)
+        ids = result['smsc_message_ids']
+        message.protocol_data['smsc_message_ids'] = ids
+        # Outside the send's try: the SMSC has the message, so a failed write must
+        # never resend it
+        try:
+            async with self.uow_factory() as uow:
+                await uow.messages.update(message)
+                await uow.messages.add_smsc_ids(message.message_id, ids)
+                await uow.commit()
+        except Exception:
+            logger.exception(
+                f'Message {message.message_id} sent as {ids}, but not saved as sent'
+            )
+        logger.info(f'Message {message.message_id} sent')
+
+    async def _save(self, message: SMSMessage) -> None:
+        """Write the message's status and retry count; log a failed write."""
+        try:
+            async with self.uow_factory() as uow:
+                await uow.messages.update(message)
+                await uow.commit()
+        except Exception:
+            logger.exception(
+                f'Message {message.message_id}: {message.status.value} '
+                f'(attempt {message.retry_count}) not saved'
+            )
 
     async def _handle_delivery_failure(self, message: SMSMessage, error: str) -> None:
         """Handle delivery failure and retry logic."""
         message.retry_count += 1
         config = self.settings.delivery
+        if message.retry_count >= config.max_retries:
+            message.status = MessageStatus.FAILED
+        await self._save(message)
 
         if message.retry_count < config.max_retries:
             delay = retry_delay(message.retry_count, config)
@@ -173,7 +202,6 @@ class DeliveryEngine:
             logger.error(
                 f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, giving up'
             )
-            message.status = MessageStatus.FAILED
 
 
 def _status_name(status: int) -> str:

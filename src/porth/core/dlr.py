@@ -11,7 +11,7 @@ import aiohttp
 from smpp import Message, MessageState
 
 from porth.core.message import MessageStatus, SMSMessage
-from porth.core.store import MessageStore
+from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +44,25 @@ def expand_url(url: str, values: tp.Mapping[str, str | bytes]) -> str:
 class DLRHandler:
     """Moves a message to its final status from receipts; calls its Kannel dlr-url."""
 
-    def __init__(self, message_store: MessageStore):
-        self.message_store = message_store
+    def __init__(self, uow_factory: tp.Callable[[], AbstractUnitOfWork]):
+        self.uow_factory = uow_factory
         self._session: tp.Optional[aiohttp.ClientSession] = None
         self._tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
 
+    async def resume(self) -> None:
+        """Make the dlr-url calls a previous run stored but did not finish."""
+        async with self.uow_factory() as uow:
+            pending = await uow.messages.callbacks()
+        for message_id, url in pending:
+            self._spawn(self._fetch(message_id, url))
+        if pending:
+            logger.info(f'Resumed {len(pending)} dlr-url call(s) from the store')
+
     async def stop(self) -> None:
+        """Cancel tasks in flight; a cancelled dlr-url call stays stored for resume()."""
         if self._session is None:
             return
         for task in self._tasks:
@@ -61,21 +71,27 @@ class DLRHandler:
         await self._session.close()
         self._session = None
 
-    def on_receipt(self, msg: Message) -> None:
-        """Apply one parsed receipt (smppai's) to the message it reports on."""
+    async def on_receipt(self, msg: Message) -> None:
+        """Apply one parsed receipt (smppai's) to the message it reports on.
+
+        Awaited by the receive loop, so a receipt is committed before its bind lets
+        go of it.
+        """
         assert msg.receipt is not None
         now = datetime.now(timezone.utc)
-        if self._apply(msg, now):
+        if await self._apply(msg, now):
             return
         if not msg.receipt.id:
             self._ignore(msg)
             return
         self._spawn(self._recheck(msg, now))
 
+    # ponytail: re-checks live in memory; a crash inside the ~15 s window loses the
+    # receipt (design.md §7 item 1), persist unmatched receipts if that bites
     async def _recheck(self, msg: Message, now: datetime) -> None:
         for wait in _UNKNOWN_WAITS:
             await asyncio.sleep(wait)
-            if self._apply(msg, now):
+            if await self._apply(msg, now):
                 return
         self._ignore(msg)
 
@@ -85,54 +101,91 @@ class DLRHandler:
         # info, not debug: a systematic SMSC id-format mismatch must show up
         logger.info(f'Receipt for unknown SMSC id {msg.receipt.id!r} ignored')
 
-    def _apply(self, msg: Message, now: datetime) -> bool:
-        """Apply the receipt to its message; False if its SMSC id is unknown."""
+    async def _apply(self, msg: Message, now: datetime) -> bool:
+        """Apply the receipt to its message in one transaction; False if its SMSC id
+        is unknown. A database error is logged and counts as applied (lost)."""
         receipt = msg.receipt
         assert receipt is not None
         smsc_id = receipt.id
-        message = self.message_store.find_by_smsc_id(smsc_id) if smsc_id else None
-        if message is None or smsc_id is None:
+        if not smsc_id:
             return False
-        if message.status in _TERMINAL:
-            logger.debug(
-                f'Receipt {receipt.id} for {message.status.value} message '
-                f'{message.message_id} ignored'
+        try:
+            async with self.uow_factory() as uow:
+                # The row lock serialises parts of one message across the receive
+                # loop and the re-check tasks
+                message = await uow.messages.get_by_smsc_id_for_update(smsc_id)
+                if message is None:
+                    return False
+                if message.status in _TERMINAL:
+                    logger.debug(
+                        f'Receipt {smsc_id} for {message.status.value} message '
+                        f'{message.message_id} ignored'
+                    )
+                    return True
+                self._advance(message, receipt.state, smsc_id, now)
+                url = (
+                    self._callback_url(message, smsc_id, msg.text or '', now)
+                    if message.status in _TERMINAL
+                    else None
+                )
+                await uow.messages.update(message)
+                if url:
+                    await uow.messages.add_callback(message.message_id, url)
+                await uow.commit()
+        except Exception:
+            logger.exception(
+                f'Receipt {smsc_id!r} ({receipt.state!r}) not saved, so lost'
             )
             return True
 
-        if receipt.state == MessageState.DELIVERED:
-            delivered = message.protocol_data.setdefault('delivered_smsc_ids', set())
-            delivered.add(smsc_id)
-            if not delivered.issuperset(message.protocol_data['smsc_message_ids']):
-                return True  # other parts still outstanding
-            message.status = MessageStatus.DELIVERED
-            message.delivered_at = now.replace(tzinfo=None)  # naive UTC, like sent_at
-        elif receipt.state == MessageState.EXPIRED:
+        if message.status in _TERMINAL:
+            logger.info(
+                f'Message {message.message_id} {message.status.value} (receipt)'
+            )
+        if url:
+            # Own task, so smppai's receive loop never waits on the client's server
+            self._spawn(self._fetch(message.message_id, url))
+        return True
+
+    @staticmethod
+    def _advance(
+        message: SMSMessage,
+        state: tp.Optional[MessageState],
+        smsc_id: str,
+        now: datetime,
+    ) -> None:
+        """Move a non-final message along by one receipt."""
+        if state == MessageState.DELIVERED:
+            delivered = message.protocol_data.setdefault('delivered_smsc_ids', [])
+            if smsc_id not in delivered:
+                delivered.append(smsc_id)
+            if set(delivered).issuperset(message.protocol_data['smsc_message_ids']):
+                message.status = MessageStatus.DELIVERED
+                message.delivered_at = now
+            # else other parts still outstanding
+        elif state == MessageState.EXPIRED:
             message.status = MessageStatus.EXPIRED
-        elif receipt.state in _FAILED:
+        elif state in _FAILED:
             message.status = MessageStatus.FAILED
         else:
             logger.info(
-                f'Receipt {receipt.id} for message {message.message_id}: '
-                f'non-final state {receipt.state!r}'
+                f'Receipt {smsc_id} for message {message.message_id}: '
+                f'non-final state {state!r}'
             )
-            return True
 
-        logger.info(f'Message {message.message_id} {message.status.value} (receipt)')
-        self._callback(message, smsc_id, msg.text or '', now)
-        return True
-
-    def _callback(
-        self, message: SMSMessage, smsc_id: str, text: str, now: datetime
-    ) -> None:
+    @staticmethod
+    def _callback_url(
+        message: SMSMessage, smsc_id: str, text: str, now: datetime
+    ) -> tp.Optional[str]:
+        """The expanded Kannel dlr-url for this final status, or None if none is due."""
         bit = _DLR_BIT[message.status]
         if (
             message.protocol != 'kannel'
             or not message.dlr_url
             or not message.protocol_data.get('dlr_mask', 0) & bit
         ):
-            return
-        url = expand_url(
+            return None
+        return expand_url(
             message.dlr_url,
             {
                 'd': str(bit),
@@ -143,8 +196,6 @@ class DLRHandler:
                 'T': str(int(now.timestamp())),
             },
         )
-        # Own task, so smppai's receive loop never waits on the client's server
-        self._spawn(self._fetch(message.message_id, url))
 
     def _spawn(self, coro: tp.Coroutine[tp.Any, tp.Any, None]) -> None:
         """Run coro as a task that stop() cancels."""
@@ -153,6 +204,20 @@ class DLRHandler:
         task.add_done_callback(self._tasks.discard)
 
     async def _fetch(self, message_id: str, url: str) -> None:
+        """Call the dlr-url, then forget the stored call (at-least-once: a call
+        cancelled by stop() stays stored and is made again by the next resume())."""
+        await self._call(message_id, url)
+        try:
+            async with self.uow_factory() as uow:
+                await uow.messages.delete_callback(message_id)
+                await uow.commit()
+        except Exception:
+            logger.exception(
+                f'dlr-url for {message_id} done, but still stored: '
+                'the next start calls it again'
+            )
+
+    async def _call(self, message_id: str, url: str) -> None:
         assert self._session is not None
         for attempt in range(_ATTEMPTS):
             try:

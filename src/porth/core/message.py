@@ -4,7 +4,7 @@ import dataclasses
 import enum
 import typing as tp
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class MessageStatus(str, enum.Enum):
@@ -36,7 +36,9 @@ class SMSMessage:
     protocol_data: dict[str, tp.Any] = dataclasses.field(default_factory=dict)
 
     # Timing
-    created_at: datetime = dataclasses.field(default_factory=datetime.utcnow)
+    created_at: datetime = dataclasses.field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     sent_at: tp.Optional[datetime] = None
     delivered_at: tp.Optional[datetime] = None
 

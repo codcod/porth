@@ -6,23 +6,27 @@ from datetime import datetime
 
 from aiohttp import web, web_request, web_response
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from porth.config.settings import Settings
-from porth.core.message import SMSMessage
+from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 logger = logging.getLogger(__name__)
 
 
 def create_http_app(
-    message_queue: MessageQueue, message_store: MessageStore, settings: Settings
+    message_queue: MessageQueue,
+    uow_factory: tp.Callable[[], AbstractUnitOfWork],
+    settings: Settings,
 ) -> web.Application:
     """Create aiohttp application with SMS API routes."""
     app = web.Application()
 
     # Store dependencies in app
     app['message_queue'] = message_queue
-    app['message_store'] = message_store
+    app['uow_factory'] = uow_factory
     app['settings'] = settings
 
     # Add routes
@@ -73,34 +77,44 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
                 'client_ip': request.remote,
                 'user_agent': request.headers.get('User-Agent', ''),
             },
+            status=MessageStatus.QUEUED,
         )
-
-        # Store before queueing, so a poll right after the response finds it
-        main_app = request.app['main_app']
-        main_app['message_store'].add(message)
-        await main_app['message_queue'].put(message)
-
-        logger.info(f'HTTP API: Queued message {message.message_id}')
-        return web.json_response(
-            {
-                'message_id': message.message_id,
-                'status': 'queued',
-                'message': 'Message queued for delivery',
-            },
-            status=200,
-        )
-
     except Exception as e:
         logger.error(f'Error sending SMS via HTTP API: {e}')
         return web.json_response(
             {'error': 'Failed to send SMS', 'details': str(e)}, status=400
         )
 
+    # Durable before it is accepted (design.md §4.6), so a restart still sends it
+    main_app = request.app['main_app']
+    try:
+        async with main_app['uow_factory']() as uow:
+            await uow.messages.add(message)
+            await uow.commit()
+    except (SQLAlchemyError, OSError) as e:  # OSError: database unreachable
+        logger.error(f'HTTP API: message not stored, so not accepted: {e!r}')
+        return web.json_response(
+            {'error': 'Failed to send SMS', 'details': 'message store unavailable'},
+            status=503,
+        )
+    await main_app['message_queue'].put(message)
+
+    logger.info(f'HTTP API: Queued message {message.message_id}')
+    return web.json_response(
+        {
+            'message_id': message.message_id,
+            'status': 'queued',
+            'message': 'Message queued for delivery',
+        },
+        status=200,
+    )
+
 
 async def get_sms_status(request: web_request.Request) -> web_response.Response:
     """Get SMS message status."""
     message_id = request.match_info['message_id']
-    message = request.app['main_app']['message_store'].get(message_id)
+    async with request.app['main_app']['uow_factory']() as uow:
+        message = await uow.messages.get(message_id)
     if message is None:
         return web.json_response(
             {'error': 'Message not found', 'details': message_id}, status=404
@@ -118,7 +132,7 @@ async def get_sms_status(request: web_request.Request) -> web_response.Response:
 
 
 def _ts(dt: tp.Optional[datetime]) -> tp.Optional[str]:
-    """Naive-UTC datetime as YYYY-MM-DDTHH:MM:SSZ, or None."""
+    """UTC datetime as YYYY-MM-DDTHH:MM:SSZ, or None."""
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ') if dt else None
 
 

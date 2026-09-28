@@ -1,6 +1,7 @@
 """Unit tests for DeliveryEngine._process_message."""
 
 import asyncio
+import copy
 
 import pytest
 from smpp import CommandStatus
@@ -11,7 +12,7 @@ from porth.core.delivery import DeliveryEngine, retry_delay
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
+from tests.conftest import FakeUowFactory
 
 
 class FakeHandler:
@@ -24,10 +25,16 @@ class FakeHandler:
         return {'smsc_message_ids': ['smsc-7', 'smsc-8']}
 
 
-def make(handler=None, settings=None):
-    engine = DeliveryEngine(
-        MessageQueue(), MessageStore(), settings or Settings()
-    )  # max_retries = 3
+class Engine(DeliveryEngine):
+    """The engine plus the fake repository its unit of work writes to."""
+
+    def stored(self, message):
+        return self.uow_factory.repo.messages[message.message_id]
+
+
+def make(handler=None, settings=None, uow_factory=None):
+    uow_factory = uow_factory or FakeUowFactory()
+    engine = Engine(MessageQueue(), uow_factory, settings or Settings())  # 3 retries
     engine.smpp_client = handler
     message = SMSMessage(
         source_addr='A',
@@ -36,6 +43,7 @@ def make(handler=None, settings=None):
         protocol='http',
         status=MessageStatus.QUEUED,  # as taken off the queue
     )
+    uow_factory.repo.messages[message.message_id] = copy.deepcopy(message)
     return engine, message
 
 
@@ -46,8 +54,38 @@ async def test_success_marks_sent_with_smsc_id():
     assert message.status == MessageStatus.SENT
     assert message.sent_at is not None
     assert message.protocol_data['smsc_message_ids'] == ['smsc-7', 'smsc-8']
-    assert engine.message_store.find_by_smsc_id('smsc-7') is message
-    assert engine.message_store.find_by_smsc_id('smsc-8') is message
+    stored = engine.stored(message)
+    assert stored.status == MessageStatus.SENT
+    assert stored.sent_at == message.sent_at and stored.sent_at.tzinfo is not None
+    assert stored.protocol_data['smsc_message_ids'] == ['smsc-7', 'smsc-8']
+    assert engine.uow_factory.repo.smsc_ids == {
+        'smsc-7': message.message_id,
+        'smsc-8': message.message_id,
+    }
+    assert engine.uow_factory.uows[-1].committed
+
+
+class CountingHandler(FakeHandler):
+    def __init__(self):
+        super().__init__()
+        self.sends = 0
+
+    async def send_message(self, message):
+        self.sends += 1
+        return await super().send_message(message)
+
+
+@pytest.mark.asyncio
+async def test_failing_sent_write_is_logged_not_resent(caplog):
+    handler = CountingHandler()
+    engine, message = make(handler)
+    engine.uow_factory.fail = OSError('database down')
+    await engine._process_message(message)
+    assert handler.sends == 1
+    assert message.status == MessageStatus.SENT
+    assert message.retry_count == 0 and not engine._retries
+    assert engine.message_queue.empty()
+    assert f'{message.message_id} sent as' in caplog.text
 
 
 @pytest.mark.asyncio
@@ -57,6 +95,7 @@ async def test_message_error_fails_without_retry():
     assert message.status == MessageStatus.FAILED
     assert message.retry_count == 0
     assert not engine._retries
+    assert engine.stored(message).status == MessageStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -66,6 +105,8 @@ async def test_no_client_goes_through_retry():
     assert message.retry_count == 1
     assert message.status == MessageStatus.QUEUED
     assert len(engine._retries) == 1
+    stored = engine.stored(message)
+    assert (stored.status, stored.retry_count) == (MessageStatus.QUEUED, 1)
 
 
 def test_retry_delay_backs_off_to_the_cap():
@@ -78,7 +119,7 @@ def test_retry_delay_backs_off_to_the_cap():
 @pytest.mark.asyncio
 async def test_retries_wait_independently():
     engine, _ = make(settings=Settings(delivery=DeliveryConfig(retry_delay=1)))
-    messages = [make()[1] for _ in range(5)]
+    messages = [make(uow_factory=engine.uow_factory)[1] for _ in range(5)]
     for message in messages:
         await engine._handle_delivery_failure(message, 'down')
     async with asyncio.timeout(1.8):  # one shared retry worker needed ~5 s
@@ -95,6 +136,7 @@ async def test_permanent_smsc_rejection_fails_without_retry():
     assert message.status == MessageStatus.FAILED
     assert message.retry_count == 0
     assert not engine._retries
+    assert engine.stored(message).status == MessageStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -127,6 +169,8 @@ async def test_last_attempt_fails_without_retry():
     assert message.retry_count == 3
     assert message.status == MessageStatus.FAILED
     assert not engine._retries
+    stored = engine.stored(message)
+    assert (stored.status, stored.retry_count) == (MessageStatus.FAILED, 3)
 
 
 @pytest.mark.asyncio

@@ -14,8 +14,8 @@ from porth.core.dlr import DLRHandler
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
-from porth.core.store import MessageStore
 from porth.protocols.smpp.client import SMPPClient
+from tests.conftest import FakeUowFactory
 
 
 def free_port() -> int:
@@ -25,7 +25,7 @@ def free_port() -> int:
 
 
 @pytest.mark.asyncio
-async def test_smpp_message_flow():
+async def test_smpp_message_flow(uow_factory):
     """A message routed through the engine reaches the SMSC as submit_sm."""
     port = free_port()
     received = []
@@ -37,7 +37,7 @@ async def test_smpp_message_flow():
 
     server.on_message_received = on_message_received
 
-    engine = DeliveryEngine(MessageQueue(), MessageStore(), Settings())
+    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
     )
@@ -49,6 +49,7 @@ async def test_smpp_message_flow():
         protocol='http',
     )
 
+    await uow_factory.repo.add(message)
     await server.start()
     try:
         await engine._process_message(message)
@@ -59,12 +60,12 @@ async def test_smpp_message_flow():
     assert len(received) == 1
     assert received[0].data_coding == 0
     assert received[0].get_message_text() == 'Hello @ €'
-    assert message.status == MessageStatus.SENT
-    assert message.protocol_data['smsc_message_ids'] == ['smsc-1']
+    assert uow_factory.repo.messages[message.message_id].status == MessageStatus.SENT
+    assert uow_factory.repo.smsc_ids == {'smsc-1': message.message_id}
 
 
 @pytest.mark.asyncio
-async def test_long_message_goes_out_in_parts():
+async def test_long_message_goes_out_in_parts(uow_factory):
     """Text longer than one SMS reaches the SMSC as UDH-concatenated submit_sm parts."""
     port = free_port()
     received = []
@@ -76,7 +77,7 @@ async def test_long_message_goes_out_in_parts():
 
     server.on_message_received = on_message_received
 
-    engine = DeliveryEngine(MessageQueue(), MessageStore(), Settings())
+    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
     )
@@ -88,6 +89,7 @@ async def test_long_message_goes_out_in_parts():
         protocol='http',
     )
 
+    await uow_factory.repo.add(message)
     await server.start()
     try:
         await engine._process_message(message)
@@ -97,8 +99,9 @@ async def test_long_message_goes_out_in_parts():
 
     assert len(received) == 2
     assert all(pdu.esm_class & 0x40 for pdu in received)  # UDHI set by smppai
-    assert message.status == MessageStatus.SENT
-    assert message.protocol_data['smsc_message_ids'] == ['smsc-1', 'smsc-2']
+    stored = uow_factory.repo.messages[message.message_id]
+    assert stored.status == MessageStatus.SENT
+    assert stored.protocol_data['smsc_message_ids'] == ['smsc-1', 'smsc-2']
 
 
 RECEIPT = (
@@ -107,20 +110,23 @@ RECEIPT = (
 )
 
 
-async def send_and_receipt(message: SMSMessage, store: MessageStore) -> None:
-    """Send message to an smppai SMSC that answers 'smsc-1', then deliver its receipt."""
+async def send_and_receipt(message: SMSMessage) -> SMSMessage:
+    """Send message to an smppai SMSC that answers 'smsc-1', then deliver its receipt;
+    return the stored message."""
+    uow_factory = FakeUowFactory()
+    store = uow_factory.repo
     port = free_port()
     server = SMPPServer(host='127.0.0.1', port=port, setup_signal_handlers=False)
     server.on_message_received = lambda server, session, pdu: 'smsc-1'
 
-    handler = DLRHandler(store)
-    engine = DeliveryEngine(MessageQueue(), store, Settings())
+    handler = DLRHandler(uow_factory)
+    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_receipt=handler.on_receipt,
     )
     engine.smpp_client = porth_client
-    store.add(message)
+    await store.add(message)
 
     await server.start()
     await handler.start()
@@ -134,13 +140,14 @@ async def send_and_receipt(message: SMSMessage, store: MessageStore) -> None:
             esm_class=0x04,
         )
         async with asyncio.timeout(5):
-            while message.status == MessageStatus.SENT:
+            while store.messages[message.message_id].status == MessageStatus.SENT:
                 await asyncio.sleep(0.01)
             await asyncio.gather(*handler._tasks)
     finally:
         await porth_client.disconnect()
         await handler.stop()
         await server.stop()
+    return store.messages[message.message_id]
 
 
 @pytest.mark.asyncio
@@ -148,9 +155,9 @@ async def test_receipt_marks_message_delivered():
     message = SMSMessage(
         source_addr='1234', destination_addr='5678', message_text='hi', protocol='http'
     )
-    await send_and_receipt(message, MessageStore())
-    assert message.status == MessageStatus.DELIVERED
-    assert message.delivered_at is not None
+    stored = await send_and_receipt(message)
+    assert stored.status == MessageStatus.DELIVERED
+    assert stored.delivered_at is not None
 
 
 @pytest.mark.asyncio
@@ -174,15 +181,15 @@ async def test_receipt_calls_kannel_dlr_url():
         dlr_url=str(dlr_server.make_url('/dlr')) + '?d=%d&f=%F',
     )
     try:
-        await send_and_receipt(message, MessageStore())
+        stored = await send_and_receipt(message)
     finally:
         await dlr_server.close()
-    assert message.status == MessageStatus.DELIVERED
+    assert stored.status == MessageStatus.DELIVERED
     assert [dict(r.query) for r in requests] == [{'d': '1', 'f': 'smsc-1'}]
 
 
 @pytest.mark.asyncio
-async def test_mo_reaches_the_application_and_its_reply_goes_back():
+async def test_mo_reaches_the_application_and_its_reply_goes_back(uow_factory):
     """An MO deliver_sm is forwarded to mo.url; its text/plain reply is sent as submit_sm."""
     queries = []
 
@@ -205,11 +212,11 @@ async def test_mo_reaches_the_application_and_its_reply_goes_back():
 
     server.on_message_received = on_message_received
 
-    queue, store = MessageQueue(), MessageStore()
+    queue = MessageQueue()
     handler = MOHandler(
-        queue, store, MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p')
+        queue, uow_factory, MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p')
     )
-    engine = DeliveryEngine(queue, store, Settings())
+    engine = DeliveryEngine(queue, uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_mo=handler.on_mo,

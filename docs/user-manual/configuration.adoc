@@ -40,7 +40,14 @@ every wait at `delivery.retry_delay`.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 | `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.
+| `db` | unset | **Required.** The PostgreSQL DSN, in SQLAlchemy's asyncpg form:
+`postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`. `PORTH_DB` as a variable. The
+shipped `config/development.yml` and `config/test.yml` point at `make db-up`'s database.
 |===
+
+As with every setting, a YAML file's `db:` wins over `PORTH_DB` when both are set, so
+`PORTH_DB` applies only when no `PORTH_CONFIG_FILE` is in use (a `.env` that `make dev`
+wrote sets one).
 
 An unknown key, in the YAML file or as a `PORTH_` variable, stops {product} at startup with
 an error naming it.

@@ -93,5 +93,7 @@ the new status on their next poll. For a Kannel `dlr-url` callback, see <<Delive
 * Receipts arrive only while the bind is up. After a lost bind, the receipts the SMSC holds
   arrive once {product} rebinds, within 10 s.
 * Receipts already received when {product} closes a bind are still applied.
+* A receipt that arrives after a restart still reaches its message, since the SMSC message
+  ids are kept in PostgreSQL with the message.
 * Other inbound messages (mobile-originated SMS) go to the application. See
   <<Mobile-originated messages>>.

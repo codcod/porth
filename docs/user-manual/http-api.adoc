@@ -62,7 +62,8 @@ Timestamps are UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`. An unknown id returns `404
 Messages sent through the Kannel-compatible API can be polled here too, by the `Message-ID`
 that `sendsms` returned.
 
-{product} keeps message records in memory. They are lost on restart. See <<Limitations>>.
+{product} keeps message records in PostgreSQL, so a status survives a restart. Records are
+not yet evicted. See <<Limitations>>.
 
 == Health
 
