@@ -8,6 +8,7 @@ http:
 kannel:
   host: "0.0.0.0"
   port: 13013
+  # default_sender: "ACME"
 
 smpp:
   clients: []
