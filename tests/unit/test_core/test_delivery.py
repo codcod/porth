@@ -8,6 +8,7 @@ from smpp import CommandStatus
 from smpp.exceptions import SMPPBindException, SMPPMessageException
 
 from porth.config.settings import DeliveryConfig, Settings
+from porth.core import delivery as delivery_module
 from porth.core.delivery import DeliveryEngine, retry_delay
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
@@ -75,13 +76,43 @@ class CountingHandler(FakeHandler):
         return await super().send_message(message)
 
 
+class FlakyUowFactory(FakeUowFactory):
+    """Commits fail for the first `failures` units of work, then succeed."""
+
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self.failures = failures
+
+    def __call__(self):
+        self.fail = OSError('database down') if self.failures > 0 else None
+        self.failures -= 1
+        return super().__call__()
+
+
 @pytest.mark.asyncio
-async def test_failing_sent_write_is_logged_not_resent(caplog):
+async def test_failing_sent_write_is_retried_not_resent(monkeypatch):
+    monkeypatch.setattr(delivery_module, '_SENT_WRITE_WAITS', (0, 0, 0))
+    handler = CountingHandler()
+    engine, message = make(handler, uow_factory=FlakyUowFactory(failures=2))
+    await engine._process_message(message)
+    assert handler.sends == 1
+    assert len(engine.uow_factory.uows) == 3
+    assert engine.stored(message).status == MessageStatus.SENT
+    assert engine.uow_factory.repo.smsc_ids == {
+        'smsc-7': message.message_id,
+        'smsc-8': message.message_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_failing_sent_write_is_logged_not_resent(caplog, monkeypatch):
+    monkeypatch.setattr(delivery_module, '_SENT_WRITE_WAITS', (0, 0, 0))
     handler = CountingHandler()
     engine, message = make(handler)
     engine.uow_factory.fail = OSError('database down')
     await engine._process_message(message)
     assert handler.sends == 1
+    assert len(engine.uow_factory.uows) == 4  # the first write and three retries
     assert message.status == MessageStatus.SENT
     assert message.retry_count == 0 and not engine._retries
     assert engine.message_queue.empty()

@@ -29,6 +29,10 @@ _TRANSIENT = {
     CommandStatus.ESME_RINVBNDSTS,
 }
 
+# Waits before retrying a failed `sent` write. They sum to under dlr's re-check window
+# (15 s), so a receipt that beat the write still finds its ids once a retry lands.
+_SENT_WRITE_WAITS = (1, 2, 4)
+
 
 def retry_delay(attempt: int, config: DeliveryConfig) -> int:
     """Seconds to wait before retry `attempt` (1-based)."""
@@ -158,16 +162,26 @@ class DeliveryEngine:
         ids = result['smsc_message_ids']
         message.protocol_data['smsc_message_ids'] = ids
         # Outside the send's try: the SMSC has the message, so a failed write must
-        # never resend it
-        try:
-            async with self.uow_factory() as uow:
-                await uow.messages.update(message)
-                await uow.messages.add_smsc_ids(message.message_id, ids)
-                await uow.commit()
-        except Exception:
-            logger.exception(
-                f'Message {message.message_id} sent as {ids}, but not saved as sent'
-            )
+        # never resend it now. Retried, since left `queued` a restart would resend it.
+        for wait in (*_SENT_WRITE_WAITS, None):
+            try:
+                async with self.uow_factory() as uow:
+                    await uow.messages.update(message)
+                    await uow.messages.add_smsc_ids(message.message_id, ids)
+                    await uow.commit()
+                break
+            except Exception:
+                if wait is None:
+                    logger.exception(
+                        f'Message {message.message_id} sent as {ids}, but not saved '
+                        'as sent: its receipts will not match, and a restart resends it'
+                    )
+                    break
+                logger.warning(
+                    f'Message {message.message_id} sent as {ids}, not saved yet; '
+                    f'retrying in {wait}s'
+                )
+                await asyncio.sleep(wait)
         logger.info(f'Message {message.message_id} sent')
 
     async def _save(self, message: SMSMessage) -> None:
