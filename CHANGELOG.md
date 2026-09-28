@@ -51,8 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   one at a time, so N failures took about N × `retry_delay` to drain (POR-010).
 - An SMSC rejection with a permanent error status, such as an invalid destination, fails the
   message at once. Only `ESME_RTHROTTLED`, `ESME_RMSGQFUL`, `ESME_RX_T_APPN` and
-  `ESME_RSYSERR` are retried, as in Kannel. A timeout, a dropped connection or a refused bind
-  is still retried (POR-010).
+  `ESME_RSYSERR` are retried, as in Kannel. A timeout, a dropped connection, a refused bind or
+  `ESME_RINVBNDSTS` (the SMSC lost the session; porth rebinds) is still retried (POR-010).
 
 **Removed**
 

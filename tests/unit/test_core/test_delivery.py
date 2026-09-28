@@ -106,6 +106,8 @@ async def test_permanent_smsc_rejection_fails_without_retry():
         SMPPBindException(
             'x', bind_type='trx', command_status=CommandStatus.ESME_RBINDFAIL
         ),
+        # the SMSC lost the session: says nothing about this message (code review)
+        SMPPMessageException('x', command_status=CommandStatus.ESME_RINVBNDSTS),
         OSError('reset'),
     ],
 )

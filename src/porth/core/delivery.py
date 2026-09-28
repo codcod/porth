@@ -25,6 +25,8 @@ _TRANSIENT = {
     CommandStatus.ESME_RMSGQFUL,
     CommandStatus.ESME_RX_T_APPN,
     CommandStatus.ESME_RSYSERR,
+    # not Kannel's: the SMSC lost our session, a verdict on the bind, not the message
+    CommandStatus.ESME_RINVBNDSTS,
 }
 
 
