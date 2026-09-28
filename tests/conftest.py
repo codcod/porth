@@ -4,6 +4,7 @@ import copy
 import typing as tp
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from porth.adapters.repository import AbstractMessageRepository
 from porth.core.message import MessageStatus, SMSMessage
@@ -20,6 +21,8 @@ class FakeMessageRepository(AbstractMessageRepository):
 
     @tp.override
     async def add(self, item: SMSMessage) -> None:
+        if item.message_id in self.messages:
+            raise IntegrityError('INSERT', None, Exception('duplicate message_id'))
         self.messages[item.message_id] = copy.deepcopy(item)
 
     @tp.override
@@ -50,6 +53,8 @@ class FakeMessageRepository(AbstractMessageRepository):
 
     @tp.override
     async def add_callback(self, message_id: str, url: str) -> None:
+        if message_id in self.dlr_callbacks:
+            raise IntegrityError('INSERT', None, Exception('duplicate message_id'))
         self.dlr_callbacks[message_id] = url
 
     @tp.override
@@ -67,6 +72,20 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.fail = fail
         self.committed = False
 
+    def _state(self) -> tuple[dict[str, tp.Any], ...]:
+        return (
+            self.messages.messages,
+            self.messages.smsc_ids,
+            self.messages.dlr_callbacks,
+        )
+
+    @tp.override
+    async def __aenter__(self) -> tp.Self:
+        # ponytail: whole-state snapshot, exact while no other unit of work writes
+        # during this one's body (the fakes never yield); per-key undo if tests need it
+        self._snapshot = copy.deepcopy(self._state())
+        return await super().__aenter__()
+
     @tp.override
     async def commit(self) -> None:
         if self.fail:
@@ -75,7 +94,11 @@ class FakeUnitOfWork(AbstractUnitOfWork):
 
     @tp.override
     async def rollback(self) -> None:
-        pass
+        """Leaving without a commit undoes this unit of work's writes, as PostgreSQL does."""
+        if not self.committed:
+            for live, saved in zip(self._state(), self._snapshot):
+                live.clear()
+                live.update(saved)
 
 
 class FakeUowFactory:

@@ -15,8 +15,11 @@ target_metadata = metadata
 
 
 def get_dsn() -> str:
-    """The DSN from porth's own settings (the same loader the gateway uses)."""
-    dsn = load_settings().db
+    """
+    The DSN from porth's own settings (the same loader the gateway uses), unless the
+    caller passed one in config.attributes['dsn'] (the integration tests do).
+    """
+    dsn = config.attributes.get('dsn') or load_settings().db
     if not dsn:
         raise SystemExit(
             'db is not set: set PORTH_DB, or db: in the PORTH_CONFIG_FILE YAML'
@@ -33,6 +36,9 @@ if context.is_offline_mode():
         version_table_schema=target_metadata.schema,
     )
     with context.begin_transaction():
+        # Before Alembic's version table, which lives in the schema (online mode
+        # gets this from run_migrations_online)
+        context.execute(f'CREATE SCHEMA IF NOT EXISTS {target_metadata.schema}')
         context.run_migrations()
 else:
     run_migrations_online(target_metadata, get_dsn())

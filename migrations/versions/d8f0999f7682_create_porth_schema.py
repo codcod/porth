@@ -21,7 +21,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.execute('CREATE SCHEMA IF NOT EXISTS porth')  # offline mode; online, monobase
     _ = op.create_table(
         'messages',
         sa.Column('message_id', sa.Text(), nullable=False),

@@ -23,7 +23,8 @@ from porth.config.settings import (
     SMPPConfig,
 )
 from porth.main import SMSGateway
-from tests.integration.test_repository import DSN, pytestmark  # noqa: F401
+from tests.integration.conftest import DSN
+from tests.integration.test_repository import pytestmark  # noqa: F401
 from tests.integration.test_smpp_flow import free_port
 
 
@@ -87,7 +88,7 @@ class SMSC:
 
 
 @pytest_asyncio.fixture
-async def env():
+async def env(database):
     """(engine, ids, target): the messages in ids are deleted afterwards."""
     engine = make_engine(DSN)
     ids: list[str] = []

@@ -12,20 +12,16 @@ from sqlalchemy.exc import IntegrityError
 from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
 from porth.core.message import MessageStatus, SMSMessage
 from porth.service_layer.unit_of_work import SqlAlchemyUnitOfWork
+from tests.integration.conftest import DSN
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get('RUN_INTEGRATION_TESTS'),
     reason='needs PostgreSQL: RUN_INTEGRATION_TESTS=1 (make test-integration)',
 )
 
-# Not PORTH_*: the settings loader rejects unknown PORTH_ variables
-DSN = os.environ.get(
-    'TEST_PORTH_DB', 'postgresql+asyncpg://porth:porth@localhost:5432/porth'
-)
-
 
 @pytest_asyncio.fixture
-async def db():
+async def db(database):
     """(engine, ids): every message id put in ids is deleted afterwards."""
     engine = make_engine(DSN)
     ids: list[str] = []

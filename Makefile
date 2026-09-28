@@ -68,7 +68,7 @@ test-unit: ## Run unit tests only
 	@echo "Running unit tests..."
 	$(UV) run pytest $(TEST_DIR)/unit -v
 
-test-integration: ## Run integration tests only (PostgreSQL ones need make db-up migrate)
+test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test database)
 	@echo "Running integration tests..."
 	RUN_INTEGRATION_TESTS=1 $(UV) run pytest $(TEST_DIR)/integration -v
 

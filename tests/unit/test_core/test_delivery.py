@@ -86,6 +86,9 @@ async def test_failing_sent_write_is_logged_not_resent(caplog):
     assert message.retry_count == 0 and not engine._retries
     assert engine.message_queue.empty()
     assert f'{message.message_id} sent as' in caplog.text
+    # Rolled back: the row keeps its old status and no SMSC id is indexed
+    assert engine.stored(message).status == MessageStatus.QUEUED
+    assert not engine.uow_factory.repo.smsc_ids
 
 
 @pytest.mark.asyncio
