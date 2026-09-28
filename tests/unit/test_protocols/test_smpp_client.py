@@ -13,7 +13,7 @@ from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
 from porth.core.message import SMSMessage
 from porth.protocols.smpp import client as client_module
-from porth.protocols.smpp.client import SMPPClient
+from porth.protocols.smpp.client import SMPPClient, part_count
 
 
 class FakeSmppai:
@@ -405,3 +405,10 @@ async def test_disconnect_waits_for_a_drain_the_rebind_loop_left(smpp, monkeypat
     await stop
     assert stored == ['smsc-42']
     assert smpp._inbound is None
+
+
+def test_part_count_follows_smppai_segmentation():
+    assert part_count('hi') == 1
+    assert part_count('a' * 161) == 2
+    assert part_count('ж' * 70) == 1  # UCS2
+    assert part_count('ж' * 71) == 2

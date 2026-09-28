@@ -44,6 +44,8 @@ class DeliveryConfig:
     backoff_factor: int = 2  # 1: fixed retry_delay
     max_retry_delay: int = 300  # seconds
     worker_count: int = 10
+    # ponytail: int, so at least 1/s; sub-1 TPS needs a float and a bucket of >= 1 token
+    throughput: tp.Optional[int] = None  # submit_sm PDUs/s; unset = unlimited
 
 
 @dataclasses.dataclass(kw_only=True)

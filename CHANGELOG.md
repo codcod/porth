@@ -34,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   startup, messages not yet sent are queued again and unfinished `dlr-url` calls are made
   again. Sent messages are not resent. The database is the new, required `db` setting
   (`PORTH_DB`); `make db-up` starts one and `make migrate` creates its tables (POR-018).
+- `delivery.throughput` caps `submit_sm` PDUs per second across all delivery workers, as
+  Kannel's per-SMSC `throughput`; a concatenated message counts once per part. Unset keeps
+  today's unlimited rate (POR-014).
 
 **Changed**
 
