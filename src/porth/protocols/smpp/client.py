@@ -45,6 +45,11 @@ def choose_data_coding(text: str) -> DataCoding:
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
 
 
+def part_count(text: str) -> int:
+    """How many submit_sm PDUs smppai's segmentation sends text as."""
+    return len(make_parts(text, choose_data_coding(text)))
+
+
 class SMPPClient:
     """SMPP client for sending messages to SMSC."""
 

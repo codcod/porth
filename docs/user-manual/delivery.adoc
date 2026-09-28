@@ -24,6 +24,17 @@
 
 A message becomes `delivered`, or `expired`, only from a delivery receipt.
 
+== Throughput cap
+
+With `delivery.throughput` set, {product} sends at most that many `submit_sm` PDUs per
+second, across all workers together. A concatenated message counts once per part. A worker
+that would go over the rate waits for its turn. The wait is not a failure and does not use
+up a retry. An `ESME_RTHROTTLED` answer from the SMSC still goes through the normal retry
+path.
+
+A message with more parts than one second's worth still goes out as one burst. The sends
+after it wait until the average is back under the cap.
+
 == Encoding and length
 
 {product} picks the SMPP `data_coding` for each message:

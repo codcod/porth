@@ -9,7 +9,7 @@ from smpp.exceptions import SMPPBindException, SMPPMessageException
 
 from porth.config.settings import DeliveryConfig, Settings
 from porth.core import delivery as delivery_module
-from porth.core.delivery import DeliveryEngine, retry_delay
+from porth.core.delivery import DeliveryEngine, TokenBucket, retry_delay
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
@@ -216,3 +216,49 @@ async def test_stop_cancels_pending_retry():
     await engine.stop()
     assert task.cancelled()
     assert engine.message_queue.empty()
+
+
+async def _timed(coro) -> float:
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await coro
+    return loop.time() - start
+
+
+@pytest.mark.asyncio
+async def test_bucket_starts_full_then_refills_at_rate():
+    bucket = TokenBucket(10)
+    assert await _timed(bucket.take(10)) < 0.1
+    assert 0.45 <= await _timed(bucket.take(5)) <= 0.8
+
+
+@pytest.mark.asyncio
+async def test_bucket_debt_is_waited_out_by_the_next_take():
+    bucket = TokenBucket(10)
+    assert await _timed(bucket.take(15)) < 0.1
+    assert 0.55 <= await _timed(bucket.take(1)) <= 0.9
+
+
+class SpyBucket:
+    def __init__(self):
+        self.takes: list[int] = []
+
+    async def take(self, n):
+        self.takes.append(n)
+
+
+@pytest.mark.asyncio
+async def test_throughput_takes_one_token_per_part():
+    assert make()[0].bucket is None
+    settings = Settings(delivery=DeliveryConfig(throughput=5))
+    engine, message = make(FakeHandler(), settings)
+    engine.bucket = SpyBucket()
+    message.message_text = 'a' * 200  # GSM 03.38: two parts
+    await engine._process_message(message)
+    assert engine.bucket.takes == [2]
+    assert message.status == MessageStatus.SENT
+
+
+def test_throughput_below_one_fails_startup():
+    with pytest.raises(ValueError, match='at least 1'):
+        make(settings=Settings(delivery=DeliveryConfig(throughput=0)))

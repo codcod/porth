@@ -22,6 +22,7 @@ delivery:
   backoff_factor: 2
   max_retry_delay: 300
   worker_count: 10
+  # throughput: 50  # submit_sm PDUs/s: the operator's contracted rate; unset = unlimited
 
 mo:
   # url: "${MO_URL}"
