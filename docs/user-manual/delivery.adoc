@@ -8,10 +8,16 @@
   Text that fits one SMS is one part.
 . When the SMSC accepts every part, the message becomes `sent`, and {product} records the
   SMSC's message id for each part, for receipt correlation.
-. If the send fails, the message waits `delivery.retry_delay` seconds and is queued again.
-  After `delivery.max_retries` attempts in total it ends `failed`.
-. Some failures are permanent: text needing more than 255 parts ends `failed` at once, with
-  no retry.
+. If the send fails, the message waits and is queued again. The first wait is
+  `delivery.retry_delay` seconds, and each later one is `delivery.backoff_factor` times
+  longer, up to `delivery.max_retry_delay`. Each message waits on its own, so one retry never
+  holds up another. After `delivery.max_retries` attempts in total it ends `failed`.
+. Some failures are permanent and end `failed` at once, with no retry: text needing more than
+  255 parts, and an SMSC rejection of the message with a permanent error status. Of the SMSC's
+  answers to a message, only four statuses are retried, as in Kannel: `ESME_RTHROTTLED`,
+  `ESME_RMSGQFUL`, `ESME_RX_T_APPN` and `ESME_RSYSERR`. A timeout, a dropped connection, a
+  refused bind, or `ESME_RINVBNDSTS` (the SMSC lost the session, so porth rebinds) is retried
+  too.
 
 . A delivery receipt from the SMSC then moves a `sent` message to `delivered`, `failed` or
   `expired`. See <<Delivery receipts>>.

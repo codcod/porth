@@ -6,7 +6,14 @@ import logging
 import typing as tp
 
 import smpp
-from smpp import Address, Client, DataCoding, Message, RegisteredDelivery
+from smpp import (
+    Address,
+    Client,
+    CommandStatus,
+    DataCoding,
+    Message,
+    RegisteredDelivery,
+)
 from smpp import SMPPClient as SmppaiClient
 from smpp.exceptions import SMPPException, SMPPPDUException
 from smpp.gsm import make_parts
@@ -149,11 +156,14 @@ class SMPPClient:
                 logger.warning(
                     f'Message {message.message_id}: parts already accepted as {sent}'
                 )
-            # An SMSC response with an error command_status came over a healthy bind;
-            # anything else (timeout, I/O, not bound) drops it. Drop only the bind that
-            # failed; another worker may already have rebound.
+            # An SMSC response with an error command_status came over a healthy bind,
+            # unless it says the SMSC lost our session; anything else (timeout, I/O,
+            # not bound) drops it. Drop only the bind that failed; another worker may
+            # already have rebound.
             smsc_rejected = (
-                isinstance(e, SMPPException) and e.command_status is not None
+                isinstance(e, SMPPException)
+                and e.command_status is not None
+                and e.command_status != CommandStatus.ESME_RINVBNDSTS
             )
             if not smsc_rejected and self.client is client:
                 await self._drop()

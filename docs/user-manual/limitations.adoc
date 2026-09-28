@@ -11,7 +11,6 @@ The ticket reference identifies the planned change.
 `dlr-url` and `dlr-mask` are ignored. Response codes are not yet Kannel's exact table. | POR-005
 | Receipt timeout | A message with no receipt never becomes `expired`. | POR-003
 | Message records | Kept in memory until restart. Nothing is evicted. | POR-003
-| Retries | A fixed delay with no backoff. Retries are processed one at a time. | POR-010
 | Configuration | YAML values are not expanded from the environment, and the environment
 cannot override a YAML file. `log_level` is ignored. | POR-012
 |===

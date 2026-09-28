@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from smpp import DeliverSm
+from smpp import CommandStatus, DeliverSm
 from smpp.client import highlevel as smpp_highlevel
 from smpp.exceptions import SMPPMessageException
 from smpp.gsm import make_parts
@@ -188,6 +188,18 @@ async def test_smsc_rejection_keeps_the_bind(smpp):
         await smpp.send_message(msg('hi'))
     assert smpp.connected
     assert not FakeSmppai.instances[0].disconnected
+
+
+@pytest.mark.asyncio
+async def test_invalid_bind_status_drops_the_bind(smpp):
+    await smpp.connect()
+    FakeSmppai.submit_error = SMPPMessageException(
+        'not bound', command_status=CommandStatus.ESME_RINVBNDSTS
+    )
+    with pytest.raises(SMPPMessageException):
+        await smpp.send_message(msg('hi'))
+    assert smpp.connected is False
+    assert FakeSmppai.instances[0].disconnected
 
 
 @pytest.mark.asyncio

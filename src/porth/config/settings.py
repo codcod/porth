@@ -38,7 +38,11 @@ class SMPPConfig:
 @dataclasses.dataclass(kw_only=True)
 class DeliveryConfig:
     max_retries: int = 3
-    retry_delay: int = 5  # seconds
+    retry_delay: int = 5  # seconds before the first retry
+    # ponytail: ints, since the loader has no float coercion; floats once POR-012's TOML
+    # loader lands, if someone needs them
+    backoff_factor: int = 2  # 1: fixed retry_delay
+    max_retry_delay: int = 300  # seconds
     worker_count: int = 10
 
 
