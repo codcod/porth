@@ -5,7 +5,10 @@ import logging
 import typing as tp
 from datetime import datetime
 
-from porth.config.settings import Settings
+from smpp import CommandStatus
+from smpp.exceptions import SMPPMessageException
+
+from porth.config.settings import DeliveryConfig, Settings
 from porth.core.exceptions import DeliveryError, MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
@@ -15,6 +18,22 @@ if tp.TYPE_CHECKING:
     from porth.protocols.smpp.client import SMPPClient
 
 logger = logging.getLogger(__name__)
+
+# Kannel's split: these submit_sm statuses are retried, any other fails the message at once
+_TRANSIENT = {
+    CommandStatus.ESME_RTHROTTLED,
+    CommandStatus.ESME_RMSGQFUL,
+    CommandStatus.ESME_RX_T_APPN,
+    CommandStatus.ESME_RSYSERR,
+}
+
+
+def retry_delay(attempt: int, config: DeliveryConfig) -> int:
+    """Seconds to wait before retry `attempt` (1-based)."""
+    return min(
+        int(config.retry_delay * config.backoff_factor ** (attempt - 1)),
+        config.max_retry_delay,
+    )
 
 
 class DeliveryEngine:
@@ -31,7 +50,7 @@ class DeliveryEngine:
         self.settings = settings
         self.workers: list[asyncio.Task] = []
         self.running = False
-        self.retry_queue: asyncio.Queue[SMSMessage] = asyncio.Queue()
+        self._retries: set[asyncio.Task] = set()
         self.smpp_client: tp.Optional['SMPPClient'] = None
 
     async def start(self) -> None:
@@ -46,10 +65,6 @@ class DeliveryEngine:
             worker = asyncio.create_task(self._delivery_worker(f'worker-{i}'))
             self.workers.append(worker)
 
-        # Start retry worker
-        retry_worker = asyncio.create_task(self._retry_worker())
-        self.workers.append(retry_worker)
-
         logger.info(
             f'Delivery engine started with {self.settings.delivery.worker_count} workers'
         )
@@ -61,12 +76,13 @@ class DeliveryEngine:
 
         self.running = False
 
-        # Cancel all workers
-        for worker in self.workers:
-            worker.cancel()
+        # Cancel all workers and pending retries (a message waiting to retry is dropped)
+        tasks = [*self.workers, *self._retries]
+        for task in tasks:
+            task.cancel()
 
-        # Wait for workers to finish
-        await asyncio.gather(*self.workers, return_exceptions=True)
+        # Wait for them to finish
+        await asyncio.gather(*tasks, return_exceptions=True)
         self.workers.clear()
 
         logger.info('Delivery engine stopped')
@@ -96,27 +112,10 @@ class DeliveryEngine:
 
         logger.info(f'Delivery worker {worker_name} stopped')
 
-    async def _retry_worker(self) -> None:
-        """Worker that handles message retries."""
-        logger.info('Retry worker started')
-
-        while self.running:
-            try:
-                # Get message from retry queue
-                message = await self.retry_queue.get()
-
-                # Wait for retry delay
-                await asyncio.sleep(self.settings.delivery.retry_delay)
-
-                # Put message back in main queue for retry
-                await self.message_queue.put(message)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f'Error in retry worker: {e}')
-
-        logger.info('Retry worker stopped')
+    async def _requeue_later(self, message: SMSMessage, delay: int) -> None:
+        """Put message back on the queue after delay seconds."""
+        await asyncio.sleep(delay)
+        await self.message_queue.put(message)
 
     async def _process_message(self, message: SMSMessage) -> None:
         """Process a single message."""
@@ -141,20 +140,42 @@ class DeliveryEngine:
             message.status = MessageStatus.FAILED
 
         except Exception as e:
+            if (
+                isinstance(e, SMPPMessageException)
+                and e.command_status is not None
+                and e.command_status not in _TRANSIENT
+            ):
+                logger.error(
+                    f'Message {message.message_id} rejected by the SMSC '
+                    f'({_status_name(e.command_status)}), not retried'
+                )
+                message.status = MessageStatus.FAILED
+                return
             logger.error(f'Failed to deliver message {message.message_id}: {e}')
             await self._handle_delivery_failure(message, str(e))
 
     async def _handle_delivery_failure(self, message: SMSMessage, error: str) -> None:
         """Handle delivery failure and retry logic."""
         message.retry_count += 1
+        config = self.settings.delivery
 
-        if message.retry_count < self.settings.delivery.max_retries:
+        if message.retry_count < config.max_retries:
+            delay = retry_delay(message.retry_count, config)
             logger.info(
-                f'Scheduling retry {message.retry_count}/{self.settings.delivery.max_retries} for message {message.message_id}'
+                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, retrying in {delay}s'
             )
-            await self.retry_queue.put(message)
+            task = asyncio.create_task(self._requeue_later(message, delay))
+            self._retries.add(task)
+            task.add_done_callback(self._retries.discard)
         else:
             logger.error(
-                f'Message {message.message_id} failed permanently after {message.retry_count} retries'
+                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, giving up'
             )
             message.status = MessageStatus.FAILED
+
+
+def _status_name(status: int) -> str:
+    try:
+        return CommandStatus(status).name
+    except ValueError:  # a status smppai's enum lacks
+        return f'0x{status:08x}'

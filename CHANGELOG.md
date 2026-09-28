@@ -44,6 +44,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pushed. Before, `dlr_url` was accepted and no callback was ever sent (POR-009).
 - The SMPP bind is retried in the background every 10 s while it is down, including after a
   failed startup bind. Before, only the next send rebound it (POR-013).
+- A failed send is retried after a wait that grows by `delivery.backoff_factor` (default 2)
+  per attempt, up to `delivery.max_retry_delay` (default 300 s). Before, every retry waited
+  `delivery.retry_delay` (POR-010).
+- Each message waits for its retry on its own. Before, one retry worker took failed messages
+  one at a time, so N failures took about N × `retry_delay` to drain (POR-010).
+- An SMSC rejection with a permanent error status, such as an invalid destination, fails the
+  message at once. Only `ESME_RTHROTTLED`, `ESME_RMSGQFUL`, `ESME_RX_T_APPN` and
+  `ESME_RSYSERR` are retried, as in Kannel. A timeout, a dropped connection or a refused bind
+  is still retried (POR-010).
 
 **Removed**
 

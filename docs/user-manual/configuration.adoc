@@ -32,7 +32,10 @@ variables for secrets instead.
 `host`, `port` (default `2775`), `system_id`, `password`, `system_type` (default empty).
 With several entries, only the last one is used. With none, every message ends `failed`.
 | `delivery.max_retries` | `3` | Total delivery attempts per message, including the first.
-| `delivery.retry_delay` | `5` | Seconds to wait before each retry.
+| `delivery.retry_delay` | `5` | Seconds before the first retry.
+| `delivery.backoff_factor` | `2` | Each later retry waits this many times longer. `1` keeps
+every wait at `delivery.retry_delay`.
+| `delivery.max_retry_delay` | `300` | Longest wait before a retry, in seconds.
 | `delivery.worker_count` | `10` | Concurrent delivery workers.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
@@ -76,6 +79,8 @@ smpp:
 delivery:
   max_retries: 3
   retry_delay: 5
+  backoff_factor: 2
+  max_retry_delay: 300
   worker_count: 10
 
 mo:

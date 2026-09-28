@@ -79,6 +79,8 @@ smpp:
 delivery:
   max_retries: 3
   retry_delay: 5
+  backoff_factor: 2
+  max_retry_delay: 300
   worker_count: 10
 ```
 
