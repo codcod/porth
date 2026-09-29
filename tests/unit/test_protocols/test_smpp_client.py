@@ -13,7 +13,7 @@ from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
 from porth.core.message import SMSMessage
 from porth.protocols.smpp import client as client_module
-from porth.protocols.smpp.client import SMPPClient, part_count
+from porth.protocols.smpp.client import Pacer, SMPPClient
 
 
 class FakeSmppai:
@@ -407,8 +407,68 @@ async def test_disconnect_waits_for_a_drain_the_rebind_loop_left(smpp, monkeypat
     assert smpp._inbound is None
 
 
-def test_part_count_follows_smppai_segmentation():
-    assert part_count('hi') == 1
-    assert part_count('a' * 161) == 2
-    assert part_count('ж' * 70) == 1  # UCS2
-    assert part_count('ж' * 71) == 2
+def test_pacer_spaces_sends_by_their_parts():
+    pacer = Pacer(10)
+    waits = [pacer.reserve(n, 0) for n in (1, 1, 3, 1)]
+    assert waits == pytest.approx([0, 0.1, 0.2, 0.5])
+
+
+def test_pacer_holds_the_window_for_a_late_multipart():
+    pacer = Pacer(10)
+    for _ in range(9):
+        pacer.reserve(1, 0)
+    # spacing alone says 0.9, which puts 12 PDUs in [0, 1)
+    assert pacer.reserve(3, 0) == pytest.approx(1.1)
+
+
+def test_pacer_holds_the_window_after_an_early_multipart():
+    pacer = Pacer(10)
+    pacer.reserve(3, 0)
+    waits = [pacer.reserve(1, 0) for _ in range(8)]
+    assert waits[-1] == pytest.approx(1.0)  # only 7 fit after the 3 in [0, 1)
+
+
+def test_pacer_stores_no_burst_after_idle():
+    pacer = Pacer(10)
+    pacer.reserve(1, 0)
+    assert pacer.reserve(1, 5) == 0
+    assert pacer.reserve(1, 5) == pytest.approx(0.1)
+
+
+def test_pacer_sends_a_message_over_the_cap_whole():
+    pacer = Pacer(2)
+    assert pacer.reserve(5, 0) == 0
+    assert pacer.reserve(1, 0) == pytest.approx(2.5)
+
+
+class SpyPacer:
+    def __init__(self, smpp):
+        self.smpp = smpp
+        self.calls: list = []
+
+    def reserve(self, n, now):
+        self.calls.append((n, self.smpp.connected))
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_send_paces_after_the_bind_per_part(smpp):
+    smpp._pacer = spy = SpyPacer(smpp)
+    await smpp.send_message(msg('a' * 200))  # GSM 03.38: two parts
+    await smpp.send_message(msg('ж' * 71))  # UCS2: two parts
+    assert spy.calls == [(2, True), (2, True)]
+
+
+@pytest.mark.asyncio
+async def test_failed_connect_takes_no_turn(smpp):
+    smpp._pacer = spy = SpyPacer(smpp)
+    FakeSmppai.fail_connect = True
+    with pytest.raises(ConnectionError):
+        await smpp.send_message(msg('hi'))
+    assert spy.calls == []
+
+
+def test_throughput_below_one_fails_and_unset_builds_no_pacer(smpp):
+    with pytest.raises(ValueError, match='at least 1'):
+        SMPPClient(smpp.config, throughput=0)
+    assert smpp._pacer is None

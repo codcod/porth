@@ -52,7 +52,7 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 every wait at `delivery.retry_delay`.
 | `delivery.max_retry_delay` | `300` | Longest wait before a retry, in seconds.
 | `delivery.worker_count` | `10` | Concurrent delivery workers.
-| `delivery.throughput` | unset | Most `submit_sm` PDUs per second, shared by all workers: the
+| `delivery.throughput` | unset | Most `submit_sm` PDUs in any one second, shared by all workers: the
 operator's contracted rate. A concatenated message counts once per part. Unset: unlimited.
 See <<Throughput cap>>.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.

@@ -12,7 +12,6 @@ from porth.config.settings import DeliveryConfig, Settings
 from porth.core.exceptions import DeliveryError, MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from porth.protocols.smpp.client import part_count
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 if tp.TYPE_CHECKING:
@@ -33,38 +32,6 @@ _TRANSIENT = {
 # Waits before retrying a failed `sent` write. They sum to under dlr's re-check window
 # (15 s), so a receipt that beat the write still finds its ids once a retry lands.
 _SENT_WRITE_WAITS = (1, 2, 4)
-
-
-class TokenBucket:
-    """Holds up to `rate` tokens, refilled at `rate` per second; starts full."""
-
-    def __init__(self, rate: int):
-        self.rate = rate
-        self.tokens = float(rate)
-        self.stamp: tp.Optional[float] = None
-        self.lock = asyncio.Lock()  # waiters are served in arrival order
-
-    async def take(self, n: int) -> None:
-        """
-        Wait until `n` tokens are there, then spend them. More than `rate` waits for a
-        full bucket and leaves it in debt, which the next take waits out.
-        """
-        # ponytail: the average holds, but a message's own parts go out as one burst;
-        # pacing each part needs a per-part hook in smppai's submit_multipart
-        async with self.lock:
-            loop = asyncio.get_running_loop()
-            while True:
-                now = loop.time()
-                if self.stamp is not None:
-                    self.tokens = min(
-                        self.rate, self.tokens + (now - self.stamp) * self.rate
-                    )
-                self.stamp = now
-                missing = min(n, self.rate) - self.tokens
-                if missing <= 0:
-                    break
-                await asyncio.sleep(missing / self.rate)
-            self.tokens -= n
 
 
 def retry_delay(attempt: int, config: DeliveryConfig) -> int:
@@ -91,10 +58,6 @@ class DeliveryEngine:
         self.running = False
         self._retries: set[asyncio.Task] = set()
         self.smpp_client: tp.Optional['SMPPClient'] = None
-        throughput = settings.delivery.throughput
-        if throughput is not None and throughput < 1:
-            raise ValueError('delivery.throughput must be at least 1')
-        self.bucket = TokenBucket(throughput) if throughput else None
 
     async def start(self) -> None:
         """Start the delivery engine workers."""
@@ -168,10 +131,6 @@ class DeliveryEngine:
 
             if self.smpp_client is None:
                 raise DeliveryError('no SMPP client configured')
-
-            if self.bucket:
-                # waiting for tokens is neither a failure nor a retry
-                await self.bucket.take(part_count(message.message_text))
 
             result = await self.smpp_client.send_message(message)
 

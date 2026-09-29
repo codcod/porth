@@ -16,7 +16,4 @@ recorded it as `sent`, is sent again. So is one {product} could not record as `s
 the database was unavailable for its retries (about 7 s); its receipts are also ignored. A receipt that arrives before {product} has recorded
 its message as `sent` (an early part of a long message, or a very fast SMSC) waits in memory,
 up to about 15 s; one still waiting at a crash is lost, and that message stays `sent`. | —
-| Throughput cap | `delivery.throughput` holds the rate on average only. After an idle
-spell up to twice the rate can go out within one second, and sends that waited through a slow
-rebind go out together. Leave it unset if the operator enforces the rate per second. | POR-024
 |===

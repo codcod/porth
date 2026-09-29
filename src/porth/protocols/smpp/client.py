@@ -1,6 +1,7 @@
 """SMPP client implementation using smppai."""
 
 import asyncio
+import collections
 import contextlib
 import logging
 import typing as tp
@@ -45,9 +46,25 @@ def choose_data_coding(text: str) -> DataCoding:
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
 
 
-def part_count(text: str) -> int:
-    """How many submit_sm PDUs smppai's segmentation sends text as."""
-    return len(make_parts(text, choose_data_coding(text)))
+class Pacer:
+    """At most `rate` PDUs in any one-second window, sends spaced `n / rate` apart."""
+
+    def __init__(self, rate: int):
+        self.rate = rate
+        self.next_at = 0.0
+        # ponytail: `rate` floats per client, fine at any contracted TPS
+        self.log: collections.deque[float] = collections.deque(maxlen=rate)
+
+    def reserve(self, n: int, now: float) -> float:
+        """Book a send of `n` PDUs at `now`; return the seconds to wait before it."""
+        start = max(now, self.next_at)
+        # the one second before start must have room for all n parts (at most rate)
+        k = len(self.log) + min(n, self.rate) - self.rate
+        if k > 0:
+            start = max(start, self.log[k - 1] + 1)
+        self.next_at = start + n / self.rate
+        self.log.extend([start] * n)
+        return start - now
 
 
 class SMPPClient:
@@ -58,8 +75,12 @@ class SMPPClient:
         config: SMPPClientConfig,
         on_receipt: tp.Optional[tp.Callable[[Message], tp.Awaitable[None]]] = None,
         on_mo: tp.Optional[tp.Callable[[Message], None]] = None,
+        throughput: tp.Optional[int] = None,
     ):
+        if throughput is not None and throughput < 1:
+            raise ValueError('throughput must be at least 1')
         self.config = config
+        self._pacer = Pacer(throughput) if throughput is not None else None
         self.on_receipt = on_receipt
         self.on_mo = on_mo
         self.client: tp.Optional[SmppaiClient] = None
@@ -137,6 +158,12 @@ class SMPPClient:
         destination = Address.parse(message.destination_addr)
 
         client = await self.connect()
+
+        if self._pacer is not None:
+            # after the bind: sends that waited out a slow rebind still go out spaced
+            parts = len(make_parts(message.message_text, data_coding))
+            loop = asyncio.get_running_loop()
+            await asyncio.sleep(self._pacer.reserve(parts, loop.time()))
 
         try:
             # smppai splits the text and sets the UDH per part; one SMSC id per part

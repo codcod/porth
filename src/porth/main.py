@@ -44,6 +44,18 @@ class SMSGateway:
         self.mo_handler = MOHandler(self.message_queue, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
+        # Built here, so a bad throughput fails before the store is read; started in
+        # start() before the workers, so a re-queued message finds its client
+        # instead of spending an attempt
+        if settings.smpp.client is not None:
+            smpp_client = SMPPClient(
+                settings.smpp.client,
+                on_receipt=self.dlr_handler.on_receipt,
+                on_mo=self.mo_handler.on_mo,
+                throughput=settings.delivery.throughput,
+            )
+            self.delivery_engine.smpp_client = smpp_client
+            self.smpp_clients.append(smpp_client)
 
     async def start(self):
         """Start all gateway components."""
@@ -77,16 +89,6 @@ class SMSGateway:
             self.settings.kannel,
         )
 
-        # The SMPP client (if configured) before the workers, so a re-queued message
-        # finds its client instead of spending an attempt
-        if self.settings.smpp.client is not None:
-            smpp_client = SMPPClient(
-                self.settings.smpp.client,
-                on_receipt=self.dlr_handler.on_receipt,
-                on_mo=self.mo_handler.on_mo,
-            )
-            self.delivery_engine.smpp_client = smpp_client
-            self.smpp_clients.append(smpp_client)
         await self.delivery_engine.start()
         for smpp_client in self.smpp_clients:
             # Binds now; if that fails, the client retries in the background
