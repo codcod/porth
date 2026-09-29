@@ -42,12 +42,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Changed**
 
+- **Breaking:** configuration is one TOML file, `config/config.toml` by default, its path
+  the command's argument (`python -m porth.main [config]`): the `[porth]` table, validated
+  strictly (unknown key, wrong type, missing required key, unknown `log_level`). The YAML
+  files, `PORTH_*` variables and `.env` are no longer read. `smpp.clients` became the single
+  `[porth.smpp.client]` table. `log_level` takes effect, and `make migrate` reads `db` from the
+  same file (POR-012).
 - Python 3.13 or later is required (POR-018).
 - Addresses carry their SMPP TON/NPI: `+<digits>` is sent as international/ISDN without the
   `+`, and a non-numeric sender as alphanumeric. Before, every address went out as given with
   TON/NPI 0 (POR-011).
-- An unknown configuration key, in the YAML file or as a `PORTH_` variable, is an error at
-  startup (POR-011).
+- An unknown configuration key is an error at startup (POR-011).
 - smppai is upgraded from 0.2.8 to 0.9.1 (POR-011).
 - Every message requests a delivery receipt (`registered_delivery = 1`), not only Kannel
   messages and HTTP messages with `dlr_url` (POR-009).
@@ -73,6 +78,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Makefile targets (POR-011).
 - The `pydantic`, `pydantic-settings`, `structlog` and `watchdog` dependencies. Settings and
   request validation use the standard library (POR-011).
+- The `debug` setting (it had no effect), the `pyyaml` dependency, and the `dev-run`,
+  `create-env`, `config-dev` and `config-test` Makefile targets (POR-012).
 
 **Fixed**
 

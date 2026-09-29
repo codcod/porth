@@ -1,24 +1,37 @@
 = Configuration
 
-{product} reads its settings in one of two ways:
+{product} reads all of its configuration from one TOML file, the `[porth]` table and its
+sub-tables. The file's path is the command's argument, `config/config.toml` by default:
 
-Environment variables:: Every setting has a `PORTH_` variable. Nested keys join with `__`,
-and lists are JSON. A `.env` file in the working directory is read too.
-A YAML file:: Set `PORTH_CONFIG_FILE` to its path. The repository ships
-`config/development.yml`, `config/production.yml` and `config/test.yml`.
+[source,bash]
+----
+python -m porth.main /etc/porth/config.toml
+----
 
-[WARNING]
-====
-When a YAML file is used, every key it sets wins over the environment. A
-`PORTH_HTTP__PORT` variable is ignored if the file sets `http.port`, and still applies if it
-does not. A list, such as `smpp.clients`, is taken whole from the file.
+`make run` uses the repository's `config/config.toml`, which holds development values. Other
+top-level tables in the file are ignored.
 
-YAML values are not expanded: `host: "${SMSC_HOST}"` sends the literal text `${SMSC_HOST}`.
-`config/production.yml` uses that form, so it does not work as shipped. Use environment
-variables for secrets instead.
-====
+There are no environment-variable overrides and no `.env` file. Secrets such as the SMSC
+password and the database DSN live in the file, so a production deployment mounts its own
+`config.toml`, as a secret, and passes its path.
+
+== Validation
+
+{product} checks the file at startup and stops with an error naming the key when:
+
+* a key is unknown, such as `porth.smpp.servers`;
+* a value has the wrong type. Values are never converted: `port = "8080"` is an error, as is
+  `reply = "yes"` or an unquoted `default_sender = 12345`;
+* a required key is missing, such as `porth.smpp.client.host`;
+* `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
+  `CRITICAL`);
+* the file has no `[porth]` table.
+
+`make config-check` loads `config/config.toml` the same way.
 
 == Settings
+
+Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 
 [cols="2,1,4",options="header"]
 |===
@@ -29,10 +42,10 @@ variables for secrets instead.
 | `kannel.host` | `0.0.0.0` | Address the Kannel-compatible API listens on.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's
-`global-sender`.
-| `smpp.clients` | `[]` | The upstream SMSC bind. Configure **exactly one** entry:
-`host`, `port` (default `2775`), `system_id`, `password`, `system_type` (default empty).
-With several entries, only the last one is used. With none, every message ends `failed`.
+`global-sender`. A string: quote a numeric short code.
+| `smpp.client` | none | The upstream SMSC, the `[porth.smpp.client]` table: `host`,
+`port` (default `2775`), `system_id`, `password`, `system_type` (default empty). Without it,
+{product} does not bind and every message ends `failed`.
 | `delivery.max_retries` | `3` | Total delivery attempts per message, including the first.
 | `delivery.retry_delay` | `5` | Seconds before the first retry.
 | `delivery.backoff_factor` | `2` | Each later retry waits this many times longer. `1` keeps
@@ -46,56 +59,44 @@ See <<Throughput cap>>.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 | `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.
 | `db` | unset | **Required.** The PostgreSQL DSN, in SQLAlchemy's asyncpg form:
-`postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`. `PORTH_DB` as a variable. The
-shipped `config/development.yml` and `config/test.yml` point at `make db-up`'s database.
+`postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`. The shipped `config/config.toml`
+points at `make db-up`'s database. `make migrate` reads it from the same file.
+| `log_level` | `INFO` | Level of the log output, in UTC.
 |===
-
-As with every setting, a YAML file's `db:` wins over `PORTH_DB` when both are set, so
-`PORTH_DB` applies only when no `PORTH_CONFIG_FILE` is in use (a `.env` that `make dev`
-wrote sets one).
-
-An unknown key, in the YAML file or as a `PORTH_` variable, stops {product} at startup with
-an error naming it.
-
-`log_level` and `debug` are accepted but have no effect: {product} logs at `INFO`.
 
 == Example
 
-`make dev` writes a `.env` that sets `PORTH_CONFIG_FILE=config/development.yml`, so `make run`
-then reads that file too, and its `clients: []` wins over `PORTH_SMPP__CLIENTS`. Remove that
-line from `.env` to configure {product} through the environment alone.
+A production file:
 
-.Environment variables
-[source,bash]
+[source,toml]
 ----
-export PORTH_HTTP__PORT=8080
-export PORTH_SMPP__CLIENTS='[{"host": "smsc.example.com", "system_id": "porth", "password": "secret"}]'
-export PORTH_DELIVERY__MAX_RETRIES=5
-make run
+[porth]
+db = "postgresql+asyncpg://porth:secret@db.internal:5432/porth"
+log_level = "INFO"
+
+[porth.http]
+host = "0.0.0.0"
+port = 8080
+
+[porth.kannel]
+default_sender = "12345"
+
+[porth.smpp.client]
+host = "smsc.example.com"
+port = 2775
+system_id = "porth"
+password = "secret"
+
+[porth.delivery]
+max_retries = 5
+retry_delay = 10
+worker_count = 10
+throughput = 50
+
+[porth.mo]
+url = "http://app.example/mo?from=%p&text=%a&charset=%C"
+reply = true
 ----
 
-.YAML file
-[source,yaml]
-----
-http:
-  host: "127.0.0.1"
-  port: 8080
-
-smpp:
-  clients:
-    - host: "smsc.example.com"
-      port: 2775
-      system_id: "porth"
-      password: "secret"
-
-delivery:
-  max_retries: 3
-  retry_delay: 5
-  backoff_factor: 2
-  max_retry_delay: 300
-  worker_count: 10
-
-mo:
-  url: "http://app.example/mo?from=%p&text=%a&charset=%C"
-  reply: true
-----
+To migrate a database other than the one in `config/config.toml`, name the file:
+`uv run alembic -x config=/etc/porth/config.toml upgrade head`.

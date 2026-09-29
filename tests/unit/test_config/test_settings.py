@@ -1,104 +1,141 @@
-"""Unit tests for load_settings (env, .env and YAML resolution)."""
+"""Unit tests for load_settings (the [porth] table of a TOML file)."""
+
+from pathlib import Path
 
 import pytest
 
 from porth.config.settings import load_settings
 
 
-def test_defaults_without_env(tmp_path):
-    settings = load_settings({}, dotenv=tmp_path / '.env')
+def load(tmp_path, text):
+    config = tmp_path / 'config.toml'
+    config.write_text(text)
+    return load_settings(config)
+
+
+def test_minimal_table_gives_defaults(tmp_path):
+    settings = load(tmp_path, '[porth]\n')
     assert settings.http.port == 8080
-    assert settings.smpp.clients == []
+    assert settings.kannel.port == 13013
+    assert settings.smpp.client is None
     assert settings.delivery.max_retries == 3
+    assert settings.mo.reply is True
+    assert (settings.db, settings.log_level) == (None, 'INFO')
 
 
-def test_env_nests_coerces_and_parses_json_lists(tmp_path):
-    env = {
-        'PORTH_HTTP__PORT': '9000',
-        'porth_debug': 'true',
-        'PORTH_SMPP__CLIENTS': '[{"host": "smsc", "system_id": "p", "password": "s"}]',
-        'HOME': '/ignored',
-    }
-    settings = load_settings(env, dotenv=tmp_path / '.env')
-    assert settings.http.port == 9000
-    assert settings.debug is True
-    (client,) = settings.smpp.clients
-    assert (client.host, client.port, client.system_id) == ('smsc', 2775, 'p')
+def test_full_file_round_trips(tmp_path):
+    settings = load(
+        tmp_path,
+        """
+[porth]
+db = "postgresql+asyncpg://u:p@h/porth"
+log_level = "WARNING"
+[porth.http]
+host = "127.0.0.1"
+port = 9000
+[porth.kannel]
+host = "127.0.0.2"
+port = 13100
+default_sender = "12345"
+[porth.smpp.client]
+host = "smsc"
+port = 2776
+system_id = "p"
+password = "s"
+system_type = "VMA"
+[porth.delivery]
+max_retries = 1
+retry_delay = 2
+backoff_factor = 1
+max_retry_delay = 60
+worker_count = 4
+throughput = 50
+[porth.mo]
+url = "http://app/mo?from=%p"
+reply = false
+[traffic]
+ignored = true
+""",
+    )
+    assert settings.db == 'postgresql+asyncpg://u:p@h/porth'
+    assert settings.log_level == 'WARNING'
+    assert (settings.http.host, settings.http.port) == ('127.0.0.1', 9000)
+    kannel = settings.kannel
+    assert (kannel.host, kannel.port, kannel.default_sender) == (
+        '127.0.0.2',
+        13100,
+        '12345',
+    )
+    client = settings.smpp.client
+    assert client is not None
+    assert (client.host, client.port, client.system_id, client.password) == (
+        'smsc',
+        2776,
+        'p',
+        's',
+    )
+    assert client.system_type == 'VMA'
+    d = settings.delivery
+    assert (d.max_retries, d.retry_delay, d.backoff_factor) == (1, 2, 1)
+    assert (d.max_retry_delay, d.worker_count, d.throughput) == (60, 4, 50)
+    assert (settings.mo.url, settings.mo.reply) == ('http://app/mo?from=%p', False)
 
 
-def test_env_wins_over_dotenv(tmp_path):
-    dotenv = tmp_path / '.env'
-    dotenv.write_text('# comment\nPORTH_HTTP__PORT=7000\nPORTH_LOG_LEVEL="DEBUG"\n')
-    settings = load_settings({'PORTH_HTTP__PORT': '7001'}, dotenv=dotenv)
-    assert settings.http.port == 7001
-    assert settings.log_level == 'DEBUG'
-
-
-def test_yaml_wins_over_env_key_by_key(tmp_path):
-    config = tmp_path / 'porth.yml'
-    config.write_text('http:\n  port: 8081\ndelivery:\n  retry_delay: 1\n')
-    env = {
-        'PORTH_CONFIG_FILE': str(config),
-        'PORTH_HTTP__HOST': '10.0.0.1',  # kept: the file's http section has no host
-        'PORTH_HTTP__PORT': '9000',  # overridden by the file
-        'PORTH_SMPP__CLIENTS': '[{"host": "smsc", "system_id": "p", "password": "s"}]',
-    }
-    settings = load_settings(env, dotenv=tmp_path / '.env')
-    assert (settings.http.host, settings.http.port) == ('10.0.0.1', 8081)
-    assert settings.delivery.retry_delay == 1
-    assert settings.smpp.clients[0].host == 'smsc'  # no smpp section in the file
-
-
-def test_yaml_list_replaces_env_list(tmp_path):
-    config = tmp_path / 'porth.yml'
-    config.write_text('smpp:\n  clients: []\n')
-    env = {
-        'PORTH_CONFIG_FILE': str(config),
-        'PORTH_SMPP__CLIENTS': '[{"host": "smsc", "system_id": "p", "password": "s"}]',
-    }
-    assert load_settings(env, dotenv=tmp_path / '.env').smpp.clients == []
+def test_host_only_kannel_keeps_kannel_default_port(tmp_path):
+    kannel = load(tmp_path, '[porth.kannel]\nhost = "127.0.0.1"\n').kannel
+    assert (kannel.host, kannel.port) == ('127.0.0.1', 13013)
 
 
 @pytest.mark.parametrize(
-    'env',
-    [{'PORTH_HTTP__PROT': '1'}, {'PORTH_SMPP__CLIENTS': '[{"host": "h"}]'}],
-)
-def test_bad_keys_raise(tmp_path, env):
-    with pytest.raises((ValueError, TypeError)):
-        load_settings(env, dotenv=tmp_path / '.env')
-
-
-@pytest.mark.parametrize(
-    'yaml_text',
+    ('text', 'key'),
     [
-        'smpp:\n  clients: [{host: h, system_id: p, password: }]\n',  # null password
-        'http:\n  host: 123\n',
-        'http:\n  port: 80.5\n',
-        'http:\n  port: true\n',
-        'http:\n',  # null section
-        'debug: 1\n',
+        ('[porth]\ndebug = true\n', 'porth.debug'),
+        ('[porth.smpp]\nservers = []\n', 'porth.smpp.servers'),
+        ('[porth.smpp]\nclients = []\n', 'porth.smpp.clients'),
     ],
 )
-def test_wrong_yaml_types_raise(tmp_path, yaml_text):
-    config = tmp_path / 'porth.yml'
-    config.write_text(yaml_text)
-    with pytest.raises(ValueError, match='invalid'):
-        load_settings({'PORTH_CONFIG_FILE': str(config)}, dotenv=tmp_path / '.env')
+def test_unknown_key_raises_naming_it(tmp_path, text, key):
+    with pytest.raises(ValueError, match=f'unknown.*{key}'):
+        load(tmp_path, text)
 
 
-@pytest.mark.parametrize('name', ['development', 'production', 'test'])
-def test_shipped_configs_load(tmp_path, name):
-    env = {'PORTH_CONFIG_FILE': f'config/{name}.yml'}
-    assert load_settings(env, dotenv=tmp_path / '.env').config_file
+@pytest.mark.parametrize(
+    ('text', 'key'),
+    [
+        ('[porth.http]\nport = "8080"\n', 'porth.http.port'),
+        ('[porth.delivery]\nworker_count = true\n', 'porth.delivery.worker_count'),
+        (
+            '[porth.smpp.client]\nhost = "h"\nsystem_id = "p"\npassword = "s"\n'
+            'port = 2775.0\n',
+            'porth.smpp.client.port',
+        ),
+        ('[porth.mo]\nreply = "yes"\n', 'porth.mo.reply'),
+        ('[porth.kannel]\ndefault_sender = 12345\n', 'porth.kannel.default_sender'),
+        ('[porth]\nhttp = 1\n', 'porth.http'),
+    ],
+)
+def test_wrong_type_raises_naming_key(tmp_path, text, key):
+    with pytest.raises(ValueError, match=f'invalid {key}:'):
+        load(tmp_path, text)
 
 
-def test_kannel_listener_defaults_and_env(tmp_path):
-    dotenv = tmp_path / '.env'
-    assert load_settings({}, dotenv=dotenv).kannel.port == 13013
-    assert (
-        load_settings({'PORTH_KANNEL__PORT': '13100'}, dotenv=dotenv).kannel.port
-        == 13100
-    )
-    # A host-only override keeps the Kannel default port, not the HTTP API's 8080
-    kannel = load_settings({'PORTH_KANNEL__HOST': '127.0.0.1'}, dotenv=dotenv).kannel
-    assert (kannel.host, kannel.port) == ('127.0.0.1', 13013)
+def test_missing_required_key_raises_naming_it(tmp_path):
+    text = '[porth.smpp.client]\nsystem_id = "p"\npassword = "s"\n'
+    with pytest.raises(ValueError, match='porth.smpp.client.host is required'):
+        load(tmp_path, text)
+
+
+def test_no_porth_table_raises(tmp_path):
+    with pytest.raises(ValueError, match=r'no \[porth\] table'):
+        load(tmp_path, '[traffic]\nx = 1\n')
+
+
+def test_unknown_log_level_raises(tmp_path):
+    with pytest.raises(ValueError, match='porth.log_level'):
+        load(tmp_path, '[porth]\nlog_level = "LOUD"\n')
+
+
+def test_shipped_config_loads():
+    root = Path(__file__).resolve().parents[3]
+    settings = load_settings(root / 'config' / 'config.toml')
+    assert settings.db and settings.log_level == 'DEBUG'

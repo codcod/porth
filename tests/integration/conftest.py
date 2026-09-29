@@ -10,8 +10,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import create_async_engine
 
-# Not PORTH_*: the settings loader rejects unknown PORTH_ variables. Not the dev
-# database either: test_restart's gateway sends every unsent row it finds.
+# Not the dev database: test_restart's gateway sends every unsent row it finds.
 DSN = os.environ.get(
     'TEST_PORTH_DB', 'postgresql+asyncpg://porth:porth@localhost:5432/porth_test'
 )

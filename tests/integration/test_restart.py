@@ -108,14 +108,12 @@ def gateway(smsc: SMSC, kannel_port: int) -> SMSGateway:
             http=HTTPConfig(host='127.0.0.1', port=0),
             kannel=KannelConfig(host='127.0.0.1', port=kannel_port),
             smpp=SMPPConfig(
-                clients=[
-                    SMPPClientConfig(
-                        host='127.0.0.1',
-                        port=smsc.port,
-                        system_id='porth',
-                        password='pw',
-                    )
-                ]
+                client=SMPPClientConfig(
+                    host='127.0.0.1',
+                    port=smsc.port,
+                    system_id='porth',
+                    password='pw',
+                )
             ),
             delivery=DeliveryConfig(retry_delay=60, worker_count=1),
         )

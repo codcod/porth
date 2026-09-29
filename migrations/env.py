@@ -1,4 +1,5 @@
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from monobase.migrations import run_migrations_online
@@ -16,14 +17,17 @@ target_metadata = metadata
 
 def get_dsn() -> str:
     """
-    The DSN from porth's own settings (the same loader the gateway uses), unless the
-    caller passed one in config.attributes['dsn'] (the integration tests do).
+    The DSN from porth's own settings (the same loader the gateway uses; the file is
+    the repo's config/config.toml, wherever alembic runs from, unless
+    `-x config=<path>` names another), unless the caller passed one in
+    config.attributes['dsn'] (the integration tests do).
     """
-    dsn = config.attributes.get('dsn') or load_settings().db
+    path = context.get_x_argument(as_dictionary=True).get(
+        'config', str(Path(__file__).resolve().parents[1] / 'config' / 'config.toml')
+    )
+    dsn = config.attributes.get('dsn') or load_settings(path).db
     if not dsn:
-        raise SystemExit(
-            'db is not set: set PORTH_DB, or db: in the PORTH_CONFIG_FILE YAML'
-        )
+        raise SystemExit(f'db is not set: set db in the [porth] table of {path}')
     return dsn
 
 

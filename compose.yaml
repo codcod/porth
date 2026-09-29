@@ -27,7 +27,7 @@ services:
       POSTGRES_USER: porth
       POSTGRES_PASSWORD: porth
       POSTGRES_DB: porth
-    # POSTGRES_PORT: another host port. Not PORTH_*: porth rejects unknown PORTH_ variables.
+    # POSTGRES_PORT: another host port (then change db in config/config.toml to match).
     ports: ["${POSTGRES_PORT:-5432}:5432"]
     volumes: [postgres-data:/var/lib/postgresql]
     healthcheck:

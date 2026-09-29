@@ -21,8 +21,8 @@ make dev
 make db-up
 make migrate
 
-# Run the application
-make dev-run
+# Run the application (config/config.toml)
+make run
 ```
 
 ### Basic Usage
@@ -65,32 +65,35 @@ make help
 
 ## Configuration
 
-Configure the gateway using YAML files in the `config/` directory:
+Configure the gateway in one TOML file, `config/config.toml` (the path is the command's
+argument). Unknown keys and wrong types stop startup:
 
-```yaml
-# config/development.yml
-http:
-  host: "0.0.0.0"
-  port: 8080
+```toml
+[porth]
+db = "postgresql+asyncpg://porth:porth@localhost:5432/porth"
+log_level = "INFO"
 
-smpp:
-  clients:
-    - host: "smsc.example.com"
-      port: 2775
-      system_id: "porth"
-      password: "secret"
+[porth.http]
+host = "0.0.0.0"
+port = 8080
 
-delivery:
-  max_retries: 3
-  retry_delay: 5
-  backoff_factor: 2
-  max_retry_delay: 300
-  worker_count: 10
+[porth.smpp.client]
+host = "smsc.example.com"
+port = 2775
+system_id = "porth"
+password = "secret"
+
+[porth.delivery]
+max_retries = 3
+retry_delay = 5
+backoff_factor = 2
+max_retry_delay = 300
+worker_count = 10
 ```
 
-`smpp.clients` holds the single upstream SMSC bind. porth binds to it as a transceiver and
+`[porth.smpp.client]` is the single upstream SMSC. porth binds to it as a transceiver and
 sends every message there as one `submit_sm` per part. A message is marked `sent` once the
-SMSC accepts every part. If no client is configured, messages end `failed` after their
+SMSC accepts every part. If it is absent, messages end `failed` after their
 retries. If the SMSC is unreachable, the gateway still starts and retries the bind every
 10 s. Text longer than one SMS (160 GSM-7 characters, where extension characters such as `€`
 count as two, or 70 UCS-2 characters) is sent as a concatenated SMS of up to 255 parts.

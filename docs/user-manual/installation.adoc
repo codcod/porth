@@ -18,22 +18,20 @@ imported as `smpp`.
 ----
 git clone git@github.com:codcod/porth.git
 cd porth
-make dev        # uv sync --dev, and a .env pointing at config/development.yml
+make dev        # uv sync --dev
 make db-up      # PostgreSQL in Docker
 make migrate    # create porth's tables (schema porth)
 ----
 
 `make migrate` runs `alembic upgrade head` against the database in the `db` setting (see
 <<Configuration>>). It is a one-off step: {product} never migrates at startup, so run it
-again before every start after an upgrade. With neither `PORTH_CONFIG_FILE` nor `PORTH_DB`
-set, it uses `config/development.yml`.
+again before every start after an upgrade. It reads `db` from `config/config.toml`.
 
 == Run
 
 [source,bash]
 ----
-make run        # python -m porth.main; reads settings from PORTH_* variables and .env
-make dev-run    # same, with PORTH_CONFIG_FILE=config/development.yml
+make run        # python -m porth.main config/config.toml
 ----
 
 The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).

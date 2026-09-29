@@ -26,7 +26,7 @@ docs/*.epub
 .asciidoctor/
 diag-mermaid-*.png
 
-# Environment files (Makefile's create-env/config-dev/config-test write these)
+# Environment files (porth reads none; config lives in config/config.toml)
 .env
 .env.*
 
