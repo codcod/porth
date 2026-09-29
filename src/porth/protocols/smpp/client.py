@@ -30,19 +30,20 @@ logger = logging.getLogger(__name__)
 _REBIND_DELAY = 10.0
 
 
-def choose_data_coding(text: str) -> DataCoding:
+def choose_data_coding(text: str) -> tuple[DataCoding, int]:
     """
     GSM 03.38 if smppai's codec can carry text, else UCS2 (as smppai's Client.send
-    picks). Raise MessageError if smppai's segmentation needs more than 255 parts.
+    picks), with the number of parts smppai's segmentation sends it as. Raise
+    MessageError if that needs more than 255 parts.
     """
     for data_coding in (DataCoding.DEFAULT, DataCoding.UCS2):
         try:
-            make_parts(text, data_coding)
+            parts = make_parts(text, data_coding)
         except SMPPPDUException:
             continue  # not representable in this coding
         except ValueError:
             raise MessageError('message needs more than 255 SMS parts')
-        return data_coding
+        return data_coding, len(parts)
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
 
 
@@ -153,17 +154,22 @@ class SMPPClient:
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
-        data_coding = choose_data_coding(message.message_text)
+        data_coding, parts = choose_data_coding(message.message_text)
         source = Address.parse(message.source_addr)
         destination = Address.parse(message.destination_addr)
 
         client = await self.connect()
 
         if self._pacer is not None:
-            # after the bind: sends that waited out a slow rebind still go out spaced
-            parts = len(make_parts(message.message_text, data_coding))
+            # after the bind: sends that waited out a slow rebind still go out spaced.
+            # A bind lost during the wait is rebound, and the send books a fresh turn
+            # instead of failing on the dead one and spending a retry.
             loop = asyncio.get_running_loop()
-            await asyncio.sleep(self._pacer.reserve(parts, loop.time()))
+            while True:
+                await asyncio.sleep(self._pacer.reserve(parts, loop.time()))
+                if self.client is client and client.is_bound:
+                    break
+                client = await self.connect()
 
         try:
             # smppai splits the text and sets the UDH per part; one SMSC id per part

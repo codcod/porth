@@ -460,6 +460,25 @@ async def test_send_paces_after_the_bind_per_part(smpp):
 
 
 @pytest.mark.asyncio
+async def test_bind_lost_while_pacing_rebinds_and_books_a_fresh_turn(smpp):
+    smpp._pacer = spy = SpyPacer(smpp)
+    await smpp.connect()
+    first = smpp.client
+    real_reserve = spy.reserve
+
+    def drop_on_first(n, now):
+        if not spy.calls:
+            first.disconnected = True  # the bind goes while this send waits
+        return real_reserve(n, now)
+
+    spy.reserve = drop_on_first
+    await smpp.send_message(msg('hi'))
+    assert first.submits == []
+    assert smpp.client is not first and len(smpp.client.submits) == 1
+    assert len(spy.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_failed_connect_takes_no_turn(smpp):
     smpp._pacer = spy = SpyPacer(smpp)
     FakeSmppai.fail_connect = True
