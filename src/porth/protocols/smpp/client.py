@@ -1,6 +1,7 @@
 """SMPP client implementation using smppai."""
 
 import asyncio
+import collections
 import contextlib
 import logging
 import typing as tp
@@ -29,25 +30,42 @@ logger = logging.getLogger(__name__)
 _REBIND_DELAY = 10.0
 
 
-def choose_data_coding(text: str) -> DataCoding:
+def choose_data_coding(text: str) -> tuple[DataCoding, int]:
     """
     GSM 03.38 if smppai's codec can carry text, else UCS2 (as smppai's Client.send
-    picks). Raise MessageError if smppai's segmentation needs more than 255 parts.
+    picks), with the number of parts smppai's segmentation sends it as. Raise
+    MessageError if that needs more than 255 parts.
     """
     for data_coding in (DataCoding.DEFAULT, DataCoding.UCS2):
         try:
-            make_parts(text, data_coding)
+            parts = make_parts(text, data_coding)
         except SMPPPDUException:
             continue  # not representable in this coding
         except ValueError:
             raise MessageError('message needs more than 255 SMS parts')
-        return data_coding
+        return data_coding, len(parts)
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
 
 
-def part_count(text: str) -> int:
-    """How many submit_sm PDUs smppai's segmentation sends text as."""
-    return len(make_parts(text, choose_data_coding(text)))
+class Pacer:
+    """At most `rate` PDUs in any one-second window, sends spaced `n / rate` apart."""
+
+    def __init__(self, rate: int):
+        self.rate = rate
+        self.next_at = 0.0
+        # ponytail: `rate` floats per client, fine at any contracted TPS
+        self.log: collections.deque[float] = collections.deque(maxlen=rate)
+
+    def reserve(self, n: int, now: float) -> float:
+        """Book a send of `n` PDUs at `now`; return the seconds to wait before it."""
+        start = max(now, self.next_at)
+        # the one second before start must have room for all n parts (at most rate)
+        k = len(self.log) + min(n, self.rate) - self.rate
+        if k > 0:
+            start = max(start, self.log[k - 1] + 1)
+        self.next_at = start + n / self.rate
+        self.log.extend([start] * n)
+        return start - now
 
 
 class SMPPClient:
@@ -58,8 +76,12 @@ class SMPPClient:
         config: SMPPClientConfig,
         on_receipt: tp.Optional[tp.Callable[[Message], tp.Awaitable[None]]] = None,
         on_mo: tp.Optional[tp.Callable[[Message], None]] = None,
+        throughput: tp.Optional[int] = None,
     ):
+        if throughput is not None and throughput < 1:
+            raise ValueError('throughput must be at least 1')
         self.config = config
+        self._pacer = Pacer(throughput) if throughput is not None else None
         self.on_receipt = on_receipt
         self.on_mo = on_mo
         self.client: tp.Optional[SmppaiClient] = None
@@ -132,11 +154,22 @@ class SMPPClient:
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
-        data_coding = choose_data_coding(message.message_text)
+        data_coding, parts = choose_data_coding(message.message_text)
         source = Address.parse(message.source_addr)
         destination = Address.parse(message.destination_addr)
 
         client = await self.connect()
+
+        if self._pacer is not None:
+            # after the bind: sends that waited out a slow rebind still go out spaced.
+            # A bind lost during the wait is rebound, and the send books a fresh turn
+            # instead of failing on the dead one and spending a retry.
+            loop = asyncio.get_running_loop()
+            while True:
+                await asyncio.sleep(self._pacer.reserve(parts, loop.time()))
+                if self.client is client and client.is_bound:
+                    break
+                client = await self.connect()
 
         try:
             # smppai splits the text and sets the UDH per part; one SMSC id per part

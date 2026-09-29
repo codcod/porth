@@ -26,14 +26,20 @@ A message becomes `delivered`, or `expired`, only from a delivery receipt.
 
 == Throughput cap
 
-With `delivery.throughput` set, {product} sends at most that many `submit_sm` PDUs per
-second, across all workers together. A concatenated message counts once per part. A worker
-that would go over the rate waits for its turn. The wait is not a failure and does not use
-up a retry. An `ESME_RTHROTTLED` answer from the SMSC still goes through the normal retry
-path.
+With `delivery.throughput` set, {product} sends at most that many `submit_sm` PDUs in any
+one-second window, across all workers together. Sends are spaced evenly, so there is no burst
+after an idle spell. A concatenated message counts once per part, and its parts go out back
+to back. A worker that would go over the cap waits for its turn. A worker that waited through
+a rebind is still spaced when the bind comes up. The wait is not a failure and does not use up
+a retry. An `ESME_RTHROTTLED` answer from the SMSC still goes through the normal retry path.
 
-A message with more parts than one second's worth still goes out as one burst. The sends
-after it wait until the average is back under the cap.
+A message with more parts than the cap still goes out whole, and goes over the cap by its own
+extra parts. The sends after it wait until the cap holds again.
+
+{product} counts each message's parts at the moment its turn starts. The parts themselves go
+out one after another, each once the SMSC has answered the one before, so a message's later
+parts leave a little late. With a high cap and a slow SMSC, a second can carry a few more PDUs
+than the cap. An `ESME_RTHROTTLED` answer from that edge is retried like any other.
 
 == Encoding and length
 
