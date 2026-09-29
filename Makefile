@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run dev-run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
+.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -23,7 +23,7 @@ install: check-uv ## Install dependencies
 	@echo "Installing dependencies with uv..."
 	$(UV) sync
 
-dev-install: check-uv create-env ## Install development dependencies and setup environment
+dev-install: check-uv ## Install development dependencies and setup environment
 	@echo "Installing development dependencies..."
 	$(UV) sync --dev
 	@echo "Development environment setup complete!"
@@ -36,17 +36,6 @@ check-uv: ## Check if uv is installed
 		echo "Error: uv is not installed. Please install uv first:"; \
 		echo "curl -LsSf https://astral.sh/uv/install.sh | sh"; \
 		exit 1; \
-	fi
-
-create-env: ## Create .env file if it doesn't exist
-	@if [ ! -f .env ]; then \
-		echo "Creating .env file..."; \
-		echo "# Development environment variables" > .env; \
-		echo "PORTH_CONFIG_FILE=config/development.yml" >> .env; \
-		echo "PORTH_LOG_LEVEL=DEBUG" >> .env; \
-		echo ".env file created"; \
-	else \
-		echo ".env file already exists"; \
 	fi
 
 # Cleaning
@@ -97,49 +86,29 @@ type-check: ## Run type checking with mypy
 check: lint format-check type-check ## Run all code quality checks
 
 # Running the application
-run: ## Run the application
+run: ## Run the application on config/config.toml
 	@echo "Starting Porth SMS Gateway..."
-	$(UV) run $(PYTHON) -m $(PROJECT_NAME).main
+	$(UV) run $(PYTHON) -m $(PROJECT_NAME).main $(CONFIG_DIR)/config.toml
 
-dev-run: create-env ## Run the application in development mode
-	@echo "Starting Porth SMS Gateway in development mode..."
-	PORTH_CONFIG_FILE=config/development.yml $(UV) run $(PYTHON) -m $(PROJECT_NAME).main
-
-# Database (the DSN is the `db` setting, read as the gateway reads it: the
-# PORTH_CONFIG_FILE YAML's db: wins, else PORTH_DB; with neither set,
-# config/development.yml)
-DB_ENV := $(if $(or $(PORTH_CONFIG_FILE),$(PORTH_DB)),,PORTH_CONFIG_FILE=config/development.yml)
+# Database (the DSN is the `db` setting in config/config.toml, read as the gateway
+# reads it)
 
 db-up: ## Start porth's PostgreSQL (docker compose)
 	docker compose up -d --wait postgres
 
 migrate: ## Apply database migrations (a one-off step, before every start after an upgrade)
-	$(DB_ENV) $(UV) run alembic upgrade head
+	$(UV) run alembic upgrade head
 
 migration: ## Generate a migration: make migration name="..."
-	$(DB_ENV) $(UV) run alembic revision --autogenerate -m "$(name)"
+	$(UV) run alembic revision --autogenerate -m "$(name)"
 
 downgrade: ## Revert migrations: make downgrade [rev=-1]
-	$(DB_ENV) $(UV) run alembic downgrade $(or $(rev),-1)
+	$(UV) run alembic downgrade $(or $(rev),-1)
 
 # Configuration
-config-check: ## Validate configuration files
-	@echo "Checking configuration files..."
-	@for config in $(CONFIG_DIR)/*.yml; do \
-		echo "Validating $$config..."; \
-		$(UV) run $(PYTHON) -c "import yaml; yaml.safe_load(open('$$config'))" || exit 1; \
-	done
-	@echo "All configuration files are valid"
-
-config-dev: ## Use development configuration
-	@echo "PORTH_CONFIG_FILE=config/development.yml" > .env.local
-	@echo "PORTH_LOG_LEVEL=DEBUG" >> .env.local
-	@echo "Development configuration set in .env.local"
-
-config-test: ## Use test configuration
-	@echo "PORTH_CONFIG_FILE=config/test.yml" > .env.local
-	@echo "PORTH_LOG_LEVEL=DEBUG" >> .env.local
-	@echo "Test configuration set in .env.local"
+config-check: ## Validate config/config.toml the way the gateway loads it
+	$(UV) run $(PYTHON) -c "from porth.config.settings import load_settings; load_settings('$(CONFIG_DIR)/config.toml')"
+	@echo "$(CONFIG_DIR)/config.toml is valid"
 
 # Dependencies
 deps-update: ## Update dependencies to latest versions
@@ -176,10 +145,10 @@ health-check: ## Check application health
 	@curl -f http://localhost:8080/health 2>/dev/null && echo "✓ Application is healthy" || echo "✗ Application is not responding"
 
 # Development workflow shortcuts
-dev: dev-install config-dev ## Quick development setup
+dev: dev-install ## Quick development setup
 	@echo ""
 	@echo "✓ Development environment ready!"
-	@echo "Run 'make dev-run' to start the application"
+	@echo "Run 'make run' to start the application"
 
 ci: install check test ## CI pipeline simulation
 	@echo "✓ CI pipeline completed successfully"

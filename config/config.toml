@@ -1,0 +1,37 @@
+# porth's configuration: the [porth] table (design.md §4.3). Development values;
+# a production deployment mounts its own copy, secrets included (docs/user-manual,
+# Configuration). Unknown keys and wrong types stop startup.
+
+[porth]
+db = "postgresql+asyncpg://porth:porth@localhost:5432/porth"  # compose's postgres
+log_level = "DEBUG"
+
+[porth.http]
+host = "0.0.0.0"
+port = 8080
+
+[porth.kannel]
+host = "0.0.0.0"
+port = 13013
+# default_sender = "ACME"  # quoted: a bare number is not a string
+
+[porth.delivery]
+max_retries = 3
+retry_delay = 5
+backoff_factor = 2
+max_retry_delay = 300
+worker_count = 10
+# throughput = 50  # submit_sm PDUs/s; unset = unlimited
+
+[porth.mo]
+# url = "http://localhost:8000/mo?from=%p&to=%P&text=%a&coding=%C"
+reply = true
+
+# One SMSC; without this table porth accepts messages but does not bind. compose's
+# smppai SMSC accepts any system_id/password (publish its port 2775 to bind from the host).
+# [porth.smpp.client]
+# host = "localhost"
+# port = 2775
+# system_id = "porth"
+# password = "secret"
+# system_type = ""

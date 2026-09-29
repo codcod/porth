@@ -1,11 +1,13 @@
 """Main application entry point."""
 
+import argparse
 import asyncio
 import logging
 import signal
 import typing as tp
 
 from aiohttp import web
+from monobase.config import setup_logging
 from monobase.db import make_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -32,7 +34,7 @@ class SMSGateway:
         self._engine: tp.Optional[AsyncEngine] = None
         if uow_factory is None:
             if not settings.db:
-                raise ValueError('db is not set (PORTH_DB)')
+                raise ValueError('db is not set: set db in [porth]')
             engine = self._engine = make_engine(settings.db)
             uow_factory = lambda: SqlAlchemyUnitOfWork(engine)  # noqa: E731
         self.uow_factory = uow_factory
@@ -75,11 +77,11 @@ class SMSGateway:
             self.settings.kannel,
         )
 
-        # SMPP clients (if configured) before the workers, so a re-queued message
+        # The SMPP client (if configured) before the workers, so a re-queued message
         # finds its client instead of spending an attempt
-        for client_config in self.settings.smpp.clients:
+        if self.settings.smpp.client is not None:
             smpp_client = SMPPClient(
-                client_config,
+                self.settings.smpp.client,
                 on_receipt=self.dlr_handler.on_receipt,
                 on_mo=self.mo_handler.on_mo,
             )
@@ -141,12 +143,12 @@ class SMSGateway:
         logging.info('SMS Gateway stopped')
 
 
-async def main():
+async def main(config: str):
     """Main entry point."""
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
+    settings = load_settings(config)
+    setup_logging(settings.log_level)
 
-    gateway = SMSGateway(load_settings())
+    gateway = SMSGateway(settings)
     shutdown_event = asyncio.Event()
 
     # Setup signal handlers for graceful shutdown
@@ -171,4 +173,6 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(prog='porth')
+    parser.add_argument('config', nargs='?', default='config/config.toml')
+    asyncio.run(main(parser.parse_args().config))

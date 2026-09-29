@@ -1,12 +1,11 @@
-"""Settings: PORTH_* environment variables (and .env), or a YAML file."""
+"""Settings: the `[porth]` table of a TOML file (design.md §4.3)."""
 
 import dataclasses
-import json
+import logging
 import os
 import typing as tp
-from pathlib import Path
 
-import yaml
+import monobase.config
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -33,15 +32,15 @@ class SMPPClientConfig:
 
 @dataclasses.dataclass(kw_only=True)
 class SMPPConfig:
-    clients: list[SMPPClientConfig] = dataclasses.field(default_factory=list)
+    client: tp.Optional[SMPPClientConfig] = None  # unset: no bind
 
 
 @dataclasses.dataclass(kw_only=True)
 class DeliveryConfig:
     max_retries: int = 3
     retry_delay: int = 5  # seconds before the first retry
-    # ponytail: ints, since the loader has no float coercion; floats once POR-012's TOML
-    # loader lands, if someone needs them
+    # ponytail: ints, since the loader takes no floats; add a float branch to _coerce if
+    # someone needs them
     backoff_factor: int = 2  # 1: fixed retry_delay
     max_retry_delay: int = 300  # seconds
     worker_count: int = 10
@@ -67,97 +66,59 @@ class Settings:
     # PostgreSQL DSN (postgresql+asyncpg://...); required to start the gateway
     db: tp.Optional[str] = None
 
-    # Configuration and logging
-    config_file: tp.Optional[str] = None
-    log_level: str = 'INFO'
-    debug: bool = False
+    log_level: str = 'INFO'  # a logging level name
 
 
-def load_settings(
-    env: tp.Mapping[str, str] = os.environ, dotenv: Path = Path('.env')
-) -> Settings:
+def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settings:
     """
-    Read PORTH_* variables (over .env; nested keys joined by '__', lists as JSON). If
-    PORTH_CONFIG_FILE names a YAML file, every key it sets wins over the environment, key
-    by key (a list is taken whole). Unknown keys raise ValueError.
+    Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
+    An unknown key, a wrong type, a missing required key or an unknown log_level
+    raises ValueError naming the key.
     """
-    data = _nest({**_read_dotenv(dotenv), **env})
-    if data.get('config_file'):
-        with open(data['config_file']) as f:
-            _merge(data, yaml.safe_load(f) or {})
-    return _build(Settings, data)
-
-
-def _merge(base: dict[str, tp.Any], over: tp.Mapping[str, tp.Any]) -> None:
-    for key, value in over.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _merge(base[key], value)
-        else:
-            base[key] = value
-
-
-def _read_dotenv(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
-    pairs = (
-        line.split('=', 1)
-        for line in path.read_text().splitlines()
-        if '=' in line and not line.lstrip().startswith('#')
-    )
-    return {k.strip(): v.strip().strip('"\'') for k, v in pairs}
-
-
-def _nest(env: tp.Mapping[str, str]) -> dict[str, tp.Any]:
-    data: dict[str, tp.Any] = {}
-    for key, value in env.items():
-        key = key.lower()
-        if not key.startswith('porth_'):
-            continue
-        *parents, leaf = key.removeprefix('porth_').split('__')
-        node = data
-        for parent in parents:
-            node = node.setdefault(parent, {})
-        node[leaf] = value
-    return data
+    data = monobase.config.read_config(os.fspath(path))
+    if not isinstance(data.get('porth'), dict):
+        raise ValueError(f'{path}: no [porth] table')
+    settings = _build(Settings, data['porth'], 'porth')
+    if settings.log_level not in logging.getLevelNamesMapping():
+        raise ValueError(f'invalid porth.log_level: {settings.log_level!r}')
+    return settings
 
 
 T = tp.TypeVar('T')
 
 
-def _build(cls: type[T], data: tp.Any) -> T:
-    if isinstance(data, str):
-        data = json.loads(data)
-    hints = tp.get_type_hints(cls)
-    unknown = data.keys() - hints.keys()
+def _build(cls: type[T], data: dict[str, tp.Any], path: str) -> T:
+    fields = dataclasses.fields(cls)  # type: ignore[arg-type]
+    unknown = data.keys() - {f.name for f in fields}
     if unknown:
-        raise ValueError(f'unknown {cls.__name__} setting(s): {sorted(unknown)}')
-    return cls(**{key: _coerce(key, hints[key], value) for key, value in data.items()})
+        raise ValueError(
+            f'unknown setting(s): {sorted(f"{path}.{k}" for k in unknown)}'
+        )
+    for f in fields:
+        no_default = (
+            dataclasses.MISSING is f.default
+            and dataclasses.MISSING is f.default_factory
+        )
+        if no_default and f.name not in data:
+            raise ValueError(f'{path}.{f.name} is required')
+    hints = tp.get_type_hints(cls)
+    return cls(**{k: _coerce(f'{path}.{k}', hints[k], v) for k, v in data.items()})
 
 
 def _coerce(key: str, hint: tp.Any, value: tp.Any) -> tp.Any:
-    """Convert an env string or YAML value to `hint`; anything else is a ValueError."""
-    if type(None) in tp.get_args(hint):  # Optional[X]
-        if value is None:
-            return None
+    """Check a TOML value against `hint`; no conversion, anything else is ValueError."""
+    if type(None) in tp.get_args(hint):  # Optional[X]: the key is present, so X
         (hint,) = (arg for arg in tp.get_args(hint) if arg is not type(None))
     if isinstance(hint, type) and dataclasses.is_dataclass(hint):
-        if isinstance(value, (dict, str)):
-            return _build(hint, value)
-    elif tp.get_origin(hint) is list:
-        items = json.loads(value) if isinstance(value, str) else value
-        if isinstance(items, list):
-            (item,) = tp.get_args(hint)
-            return [_coerce(key, item, v) for v in items]
+        if isinstance(value, dict):
+            return _build(hint, value, key)
     elif hint is bool:
         if isinstance(value, bool):
             return value
-        if isinstance(value, str):
-            return value.strip().lower() in ('1', 'true', 'yes', 'on')
     elif hint is int:
         if isinstance(value, int) and not isinstance(value, bool):
             return value
-        if isinstance(value, str) and value.strip().lstrip('+-').isdigit():
-            return int(value)
     elif hint is str and isinstance(value, str):
         return value
-    raise ValueError(f'invalid {key!r} setting: {value!r} is not {hint}')
+    expected = 'a table' if dataclasses.is_dataclass(hint) else hint.__name__
+    raise ValueError(f'invalid {key}: {value!r} is not {expected}')
