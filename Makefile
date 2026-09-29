@@ -90,20 +90,20 @@ run: ## Run the application on config/config.toml
 	@echo "Starting Porth SMS Gateway..."
 	$(UV) run $(PYTHON) -m $(PROJECT_NAME).main $(CONFIG_DIR)/config.toml
 
-# Database (the DSN is the `db` setting in config/config.toml, read as the gateway
-# reads it)
+# Database (the DSN is the `db` setting in $(CONFIG_DIR)/config.toml, read as the
+# gateway reads it)
 
 db-up: ## Start porth's PostgreSQL (docker compose)
 	docker compose up -d --wait postgres
 
 migrate: ## Apply database migrations (a one-off step, before every start after an upgrade)
-	$(UV) run alembic upgrade head
+	$(UV) run alembic -x config=$(CONFIG_DIR)/config.toml upgrade head
 
 migration: ## Generate a migration: make migration name="..."
-	$(UV) run alembic revision --autogenerate -m "$(name)"
+	$(UV) run alembic -x config=$(CONFIG_DIR)/config.toml revision --autogenerate -m "$(name)"
 
 downgrade: ## Revert migrations: make downgrade [rev=-1]
-	$(UV) run alembic downgrade $(or $(rev),-1)
+	$(UV) run alembic -x config=$(CONFIG_DIR)/config.toml downgrade $(or $(rev),-1)
 
 # Configuration
 config-check: ## Validate config/config.toml the way the gateway loads it
