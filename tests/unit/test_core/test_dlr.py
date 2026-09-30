@@ -30,9 +30,10 @@ def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0):
         dlr_url=dlr_url,
         protocol_data={'dlr_mask': dlr_mask, 'smsc_message_ids': ids},
         status=MessageStatus.SENT,
+        smsc='a',
     )
     repo.messages[message.message_id] = message
-    repo.smsc_ids.update(dict.fromkeys(ids, message.message_id))
+    repo.smsc_ids.update(dict.fromkeys((('a', i) for i in ids), message.message_id))
     return lambda: repo.messages[message.message_id]
 
 
@@ -45,10 +46,10 @@ def store(uow_factory):
 async def test_two_parts_deliver_only_when_both_do(store, uow_factory):
     handler = DLRHandler(uow_factory)
     message = sent(store, ['s1', 's2'])
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert message().status == MessageStatus.SENT
     assert message().protocol_data['delivered_smsc_ids'] == ['s1']  # JSON: a list
-    await handler.on_receipt(receipt('s2', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s2', MessageState.DELIVERED), 'a')
     assert message().status == MessageStatus.DELIVERED
     assert message().delivered_at is not None
     assert message().delivered_at.tzinfo is not None
@@ -62,7 +63,7 @@ async def test_two_parts_deliver_only_when_both_do(store, uow_factory):
 @pytest.mark.asyncio
 async def test_failing_part_fails_the_message(store, uow_factory, part, state):
     message = sent(store, ['s1', 's2'])
-    await DLRHandler(uow_factory).on_receipt(receipt(part, state))
+    await DLRHandler(uow_factory).on_receipt(receipt(part, state), 'a')
     assert message().status == MessageStatus.FAILED
 
 
@@ -79,7 +80,7 @@ async def test_failing_part_fails_the_message(store, uow_factory, part, state):
 @pytest.mark.asyncio
 async def test_state_mapping(store, uow_factory, state, status):
     message = sent(store, ['s1'])
-    await DLRHandler(uow_factory).on_receipt(receipt('s1', state))
+    await DLRHandler(uow_factory).on_receipt(receipt('s1', state), 'a')
     assert message().status == status
 
 
@@ -87,15 +88,15 @@ async def test_state_mapping(store, uow_factory, state, status):
 async def test_unknown_id_and_terminal_message_are_ignored(store, handler, caplog):
     caplog.set_level('INFO')
     message = sent(store, ['s1'])
-    await handler.on_receipt(receipt('nope', MessageState.DELIVERED))
-    await handler.on_receipt(receipt(None, MessageState.DELIVERED))
-    assert 'unknown SMSC id None ignored' in caplog.text
+    await handler.on_receipt(receipt('nope', MessageState.DELIVERED), 'a')
+    await handler.on_receipt(receipt(None, MessageState.DELIVERED), 'a')
+    assert 'unknown SMSC id None from a ignored' in caplog.text
     assert "'nope'" not in caplog.text  # still being looked up
     await settle(handler)
-    assert "unknown SMSC id 'nope' ignored" in caplog.text
+    assert "unknown SMSC id 'nope' from a ignored" in caplog.text
     assert message().status == MessageStatus.SENT
-    await handler.on_receipt(receipt('s1', MessageState.UNDELIVERABLE))
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.UNDELIVERABLE), 'a')
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert message().status == MessageStatus.FAILED
 
 
@@ -115,9 +116,11 @@ async def test_early_part_receipt_counts_once_its_id_is_indexed(
     )
     store.messages[message.message_id] = message
     # Part 1's receipt beats part 2's submit_sm_resp, so its id is not indexed yet
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
-    store.smsc_ids.update({'s1': message.message_id, 's2': message.message_id})
-    await handler.on_receipt(receipt('s2', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    store.smsc_ids.update(
+        {('a', 's1'): message.message_id, ('a', 's2'): message.message_id}
+    )
+    await handler.on_receipt(receipt('s2', MessageState.DELIVERED), 'a')
     assert store.messages[message.message_id].status == MessageStatus.SENT
     await settle(handler)
     assert store.messages[message.message_id].status == MessageStatus.DELIVERED
@@ -129,7 +132,7 @@ async def test_stop_cancels_a_pending_recheck(store, uow_factory, monkeypatch):
     monkeypatch.setattr(dlr_module, '_UNKNOWN_WAITS', (3600,))
     handler = DLRHandler(uow_factory)
     await handler.start()
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     (recheck,) = handler._tasks
     await handler.stop()
     assert recheck.cancelled()
@@ -207,7 +210,7 @@ async def settle(handler):
 @pytest.mark.asyncio
 async def test_kannel_mask_3_delivered_gets_one_get(store, handler, recorder):
     message = sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=3)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert len(recorder.requests) == 1
     request = recorder.requests[0]
@@ -216,9 +219,27 @@ async def test_kannel_mask_3_delivered_gets_one_get(store, handler, recorder):
 
 
 @pytest.mark.asyncio
+async def test_same_id_from_another_smsc_is_not_this_message(store, handler, caplog):
+    caplog.set_level('INFO')
+    message = sent(store, ['s1'])  # from SMSC a
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'b')
+    await settle(handler)  # the re-checks look for ('b', 's1') too
+    assert "unknown SMSC id 's1' from b ignored" in caplog.text
+    assert message().status == MessageStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_dlr_url_percent_i_is_the_smsc(store, handler, recorder):
+    sent(store, ['s1'], 'kannel', recorder.url('i=%i'), dlr_mask=1)
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    assert [dict(r.query) for r in recorder.requests] == [{'i': 'a'}]
+
+
+@pytest.mark.asyncio
 async def test_kannel_failed_reports_2(store, handler, recorder):
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=2)
-    await handler.on_receipt(receipt('s1', MessageState.EXPIRED))
+    await handler.on_receipt(receipt('s1', MessageState.EXPIRED), 'a')
     await settle(handler)
     assert [r.query['d'] for r in recorder.requests] == ['2']
 
@@ -227,7 +248,7 @@ async def test_kannel_failed_reports_2(store, handler, recorder):
 @pytest.mark.parametrize('protocol, mask', [('kannel', 2), ('kannel', 0), ('http', 3)])
 async def test_no_callback(store, handler, recorder, protocol, mask):
     sent(store, ['s1'], protocol, recorder.url(), dlr_mask=mask)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert recorder.requests == []
 
@@ -235,9 +256,9 @@ async def test_no_callback(store, handler, recorder, protocol, mask):
 @pytest.mark.asyncio
 async def test_multipart_calls_back_once(store, handler, recorder):
     sent(store, ['s1', 's2'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
-    await handler.on_receipt(receipt('s2', MessageState.DELIVERED))
-    await handler.on_receipt(receipt('s2', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await handler.on_receipt(receipt('s2', MessageState.DELIVERED), 'a')
+    await handler.on_receipt(receipt('s2', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert [r.query['f'] for r in recorder.requests] == ['s2']
 
@@ -246,7 +267,7 @@ async def test_multipart_calls_back_once(store, handler, recorder):
 async def test_retries_until_2xx(store, handler, recorder):
     recorder.statuses = [500, 500]
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert len(recorder.requests) == 3
 
@@ -255,7 +276,7 @@ async def test_retries_until_2xx(store, handler, recorder):
 async def test_gives_up_after_three_attempts(store, handler, recorder):
     recorder.statuses = [500] * 5
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert len(recorder.requests) == 3
 
@@ -278,7 +299,7 @@ async def test_receipt_stores_status_and_callback_before_the_fetch(
 
     monkeypatch.setattr(handler, '_call', call)
     message = sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert uow_factory.uows[0].committed
     await settle(handler)
     ((status, callbacks),) = seen
@@ -294,7 +315,7 @@ async def test_fetch_forgets_the_stored_call_when_done(
 ):
     recorder.statuses = statuses
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert len(store.dlr_callbacks) == 1
     await settle(handler)
     assert store.dlr_callbacks == {}
@@ -308,7 +329,7 @@ async def test_stopped_fetch_stays_stored_and_resume_makes_it(
     handler = DLRHandler(uow_factory)
     await handler.start()
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     async with asyncio.timeout(5):
         while not recorder.requests:
             await asyncio.sleep(0.01)
@@ -330,6 +351,6 @@ async def test_database_error_is_logged_and_swallowed(
 ):
     sent(store, ['s1'])
     uow_factory.fail = OSError('database down')
-    await handler.on_receipt(receipt('s1', MessageState.DELIVERED))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert "Receipt 's1'" in caplog.text and 'not saved' in caplog.text
     assert not handler._tasks  # no re-check, no fetch

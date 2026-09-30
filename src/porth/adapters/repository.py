@@ -17,15 +17,17 @@ _UNSENT = (MessageStatus.PENDING.value, MessageStatus.QUEUED.value)
 class AbstractMessageRepository(AbstractRepository[SMSMessage]):
     @abc.abstractmethod
     async def update(self, message: SMSMessage) -> None:
-        """Write status, retry_count, sent_at, delivered_at and protocol_data."""
+        """Write status, retry_count, sent_at, delivered_at, protocol_data and smsc."""
 
     @abc.abstractmethod
-    async def add_smsc_ids(self, message_id: str, ids: list[str]) -> None:
-        """Index ids to message_id; an id already indexed moves to this message."""
+    async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:
+        """Index smsc's ids to message_id; an id already indexed moves to this message."""
 
     @abc.abstractmethod
-    async def get_by_smsc_id_for_update(self, smsc_id: str) -> SMSMessage | None:
-        """The message an SMSC id belongs to, row-locked until the commit."""
+    async def get_by_smsc_id_for_update(
+        self, smsc: str, smsc_id: str
+    ) -> SMSMessage | None:
+        """The message smsc's id belongs to, row-locked until the commit."""
 
     @abc.abstractmethod
     async def unsent(self) -> list[SMSMessage]:
@@ -71,29 +73,32 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
                 sent_at=message.sent_at,
                 delivered_at=message.delivered_at,
                 protocol_data=message.protocol_data,
+                smsc=message.smsc,
             )
         )
 
     @tp.override
-    async def add_smsc_ids(self, message_id: str, ids: list[str]) -> None:
+    async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:
         if not ids:
             return
         stmt = insert(smsc_ids).values(
-            [{'smsc_id': i, 'message_id': message_id} for i in ids]
+            [{'smsc': smsc, 'smsc_id': i, 'message_id': message_id} for i in ids]
         )
         await self.connection.execute(
             stmt.on_conflict_do_update(
-                index_elements=[smsc_ids.c.smsc_id],
+                index_elements=[smsc_ids.c.smsc, smsc_ids.c.smsc_id],
                 set_={'message_id': stmt.excluded.message_id},
             )
         )
 
     @tp.override
-    async def get_by_smsc_id_for_update(self, smsc_id: str) -> SMSMessage | None:
+    async def get_by_smsc_id_for_update(
+        self, smsc: str, smsc_id: str
+    ) -> SMSMessage | None:
         result = await self.connection.execute(
             sa.select(messages)
             .join(smsc_ids, smsc_ids.c.message_id == messages.c.message_id)
-            .where(smsc_ids.c.smsc_id == smsc_id)
+            .where(smsc_ids.c.smsc == smsc, smsc_ids.c.smsc_id == smsc_id)
             .with_for_update(of=messages)
         )
         row = result.one_or_none()

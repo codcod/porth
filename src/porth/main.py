@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import functools
 import logging
 import signal
 import typing as tp
@@ -14,8 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from porth.config.settings import HTTPConfig, KannelConfig, Settings, load_settings
 from porth.core.delivery import DeliveryEngine
 from porth.core.dlr import DLRHandler
+from porth.core.exceptions import NoRoute
+from porth.core.message import MessageStatus, SMSMessage
 from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
+from porth.core.routing import Router
 from porth.protocols.http.api import create_http_app
 from porth.protocols.kannel.api import create_kannel_app
 from porth.protocols.smpp.client import SMPPClient
@@ -38,23 +42,30 @@ class SMSGateway:
             engine = self._engine = make_engine(settings.db)
             uow_factory = lambda: SqlAlchemyUnitOfWork(engine)  # noqa: E731
         self.uow_factory = uow_factory
-        self.message_queue = MessageQueue()
-        self.delivery_engine = DeliveryEngine(self.message_queue, uow_factory, settings)
+        self.router = Router(settings.smsc, settings.routing)
+        # One engine (queue, workers, client) per SMSC, so a slow or down SMSC holds
+        # up only its own messages
+        self.engines = {
+            name: DeliveryEngine(MessageQueue(), uow_factory, settings)
+            for name in settings.smsc
+        }
+        self.queues = {name: e.message_queue for name, e in self.engines.items()}
         self.dlr_handler = DLRHandler(uow_factory)
-        self.mo_handler = MOHandler(self.message_queue, uow_factory, settings.mo)
+        self.mo_handler = MOHandler(self.queues, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
         # Built here, so a bad throughput fails before the store is read; started in
         # start() before the workers, so a re-queued message finds its client
-        # instead of spending an attempt
-        if settings.smpp.client is not None:
+        # instead of spending an attempt. The SMSC's name reaches receipts and MO
+        # through these callbacks.
+        for name, config in settings.smsc.items():
             smpp_client = SMPPClient(
-                settings.smpp.client,
-                on_receipt=self.dlr_handler.on_receipt,
-                on_mo=self.mo_handler.on_mo,
-                throughput=settings.delivery.throughput,
+                config,
+                on_receipt=functools.partial(self.dlr_handler.on_receipt, smsc=name),
+                on_mo=functools.partial(self.mo_handler.on_mo, smsc=name),
+                throughput=config.throughput,
             )
-            self.delivery_engine.smpp_client = smpp_client
+            self.engines[name].smpp_client = smpp_client
             self.smpp_clients.append(smpp_client)
 
     async def start(self):
@@ -64,10 +75,17 @@ class SMSGateway:
         # unreachable database fails the start here.
         async with self.uow_factory() as uow:
             unsent = await uow.messages.unsent()
+        requeued = 0
         for message in unsent:
-            await self.message_queue.put(message)
-        if unsent:
-            logging.info(f'Re-queued {len(unsent)} message(s) from the store')
+            if message.smsc not in self.engines:
+                # Its SMSC was removed from the config, or it predates routing
+                await self._reroute(message)
+            if message.status != MessageStatus.FAILED:
+                assert message.smsc is not None
+                await self.queues[message.smsc].put(message)
+                requeued += 1
+        if requeued:
+            logging.info(f'Re-queued {requeued} message(s) from the store')
 
         # Before any bind (a worker's send binds too), so the first receipt or MO can
         # already be handled
@@ -77,24 +95,45 @@ class SMSGateway:
 
         # Start the HTTP API and the Kannel-compatible API, each on its own listener
         await self._serve(
-            create_http_app(self.message_queue, self.uow_factory, self.settings),
+            create_http_app(self.queues, self.router, self.uow_factory, self.settings),
             self.settings.http,
         )
         await self._serve(
             create_kannel_app(
-                self.message_queue,
+                self.queues,
+                self.router,
                 self.uow_factory,
                 default_sender=self.settings.kannel.default_sender,
             ),
             self.settings.kannel,
         )
 
-        await self.delivery_engine.start()
+        for engine in self.engines.values():
+            await engine.start()
         for smpp_client in self.smpp_clients:
             # Binds now; if that fails, the client retries in the background
             smpp_client.start()
 
         logging.info('SMS Gateway started successfully')
+
+    async def _reroute(self, message: SMSMessage) -> None:
+        """Route a recovered message again, or fail it; either way store it."""
+        was = message.smsc
+        try:
+            message.smsc = self.router.route(message.destination_addr)
+            logging.info(
+                f'Message {message.message_id}: SMSC {was!r} is not configured, '
+                f'rerouted to {message.smsc!r}'
+            )
+        except NoRoute as e:
+            message.status = MessageStatus.FAILED
+            logging.warning(
+                f'Message {message.message_id}: SMSC {was!r} is not configured '
+                f'and {e}: failed'
+            )
+        async with self.uow_factory() as uow:
+            await uow.messages.update(message)
+            await uow.commit()
 
     async def _serve(self, app: web.Application, config: HTTPConfig | KannelConfig):
         runner = web.AppRunner(app)
@@ -108,10 +147,11 @@ class SMSGateway:
 
         # Stop delivery engine first, so no worker lazily rebinds a stopped client;
         # disconnect() stops the client's own rebind loop
-        try:
-            await self.delivery_engine.stop()
-        except Exception as e:
-            logging.error(f'Error stopping delivery engine: {e}')
+        for engine in self.engines.values():
+            try:
+                await engine.stop()
+            except Exception as e:
+                logging.error(f'Error stopping delivery engine: {e}')
 
         # Stop SMPP clients
         for client in self.smpp_clients:
@@ -177,4 +217,13 @@ async def main(config: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='porth')
     parser.add_argument('config', nargs='?', default='config/config.toml')
-    asyncio.run(main(parser.parse_args().config))
+    parser.add_argument(
+        '--check',
+        action='store_true',
+        help='validate the config as startup does (connects to nothing) and exit',
+    )
+    args = parser.parse_args()
+    if args.check:
+        SMSGateway(load_settings(args.config))
+    else:
+        asyncio.run(main(args.config))

@@ -19,15 +19,17 @@ password and the database DSN live in the file, so a production deployment mount
 
 {product} checks the file at startup and stops with an error naming the key when:
 
-* a key is unknown, such as `porth.smpp.servers`;
+* a key is unknown, such as `porth.http.hostname`;
 * a value has the wrong type. Values are never converted: `port = "8080"` is an error, as is
   `reply = "yes"` or an unquoted `default_sender = 12345`;
-* a required key is missing, such as `porth.smpp.client.host`;
+* a required key is missing, such as `porth.smsc.op-a.host`;
+* a routing rule is not digits, or names an SMSC that is not configured;
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
 * the file has no `[porth]` table.
 
-`make config-check` loads `config/config.toml` the same way.
+`make config-check` (`python -m porth.main --check <file>`) runs the same checks on
+`config/config.toml` without connecting to anything.
 
 == Settings
 
@@ -43,18 +45,17 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's
 `global-sender`. A string: quote a numeric short code.
-| `smpp.client` | none | The upstream SMSC, the `[porth.smpp.client]` table: `host`,
-`port` (default `2775`), `system_id`, `password`, `system_type` (default empty). Without it,
-{product} does not bind and every message ends `failed`.
+| `smsc.<name>` | none | One upstream SMSC per table, named by the table's key. See
+<<SMSCs>>. Without any, nothing routes and every submit is refused.
+| `routing.default` | unset | The SMSC for a number no prefix matches. See <<Routing rules>>.
+| `routing.prefixes` | empty | Destination prefix to SMSC name. See <<Routing rules>>.
 | `delivery.max_retries` | `3` | Total delivery attempts per message, including the first.
 | `delivery.retry_delay` | `5` | Seconds before the first retry.
 | `delivery.backoff_factor` | `2` | Each later retry waits this many times longer. `1` keeps
 every wait at `delivery.retry_delay`.
 | `delivery.max_retry_delay` | `300` | Longest wait before a retry, in seconds.
-| `delivery.worker_count` | `10` | Concurrent delivery workers.
-| `delivery.throughput` | unset | Most `submit_sm` PDUs in any one second, shared by all workers: the
-operator's contracted rate. A concatenated message counts once per part. Unset: unlimited.
-See <<Throughput cap>>.
+| `delivery.worker_count` | `10` | Concurrent delivery workers, for each SMSC: two SMSCs
+have ten each.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 | `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.
@@ -63,6 +64,40 @@ Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 points at `make db-up`'s database. `make migrate` reads it from the same file.
 | `log_level` | `INFO` | Level of the log output, in UTC.
 |===
+
+== SMSCs
+
+Each `[porth.smsc.<name>]` table is one SMSC {product} binds to, as a transceiver. The name
+is the table's key, such as `op-a` in `[porth.smsc.op-a]`. It appears in the logs, in the
+routing rules, in the Kannel `smsc` parameter and as `%i`.
+
+[cols="2,1,4",options="header"]
+|===
+| Key | Default | Meaning
+
+| `host` | none | **Required.** The SMSC's address.
+| `port` | `2775` | The SMSC's port.
+| `system_id` | none | **Required.** The bind's system id.
+| `password` | none | **Required.** The bind's password.
+| `system_type` | empty | The bind's system type.
+| `throughput` | unset | Most `submit_sm` PDUs this SMSC gets in any one second: the
+operator's contracted rate. A concatenated message counts once per part. Unset: unlimited.
+At least `1`. See <<Throughput cap>>.
+|===
+
+== Routing rules
+
+Each message goes out through one SMSC, chosen once when it is submitted:
+
+. the SMSC a Kannel client names with `smsc`, if any;
+. else the SMSC of the longest prefix in `[porth.routing.prefixes]` that the destination
+  number starts with;
+. else `routing.default`;
+. else nothing, and the submit is refused. See <<Routing>>.
+
+A prefix is digits only, and quoted, as a TOML key: `"4470" = "op-b"`. The number is matched
+without one leading `+`, so `+447012…` and `447012…` both match `"4470"`. `00` is not
+rewritten: `00447012…` matches only a rule that starts with `00`.
 
 == Example
 
@@ -81,17 +116,30 @@ port = 8080
 [porth.kannel]
 default_sender = "12345"
 
-[porth.smpp.client]
-host = "smsc.example.com"
+[porth.smsc.op-a]
+host = "smsc.op-a.example"
 port = 2775
 system_id = "porth"
 password = "secret"
+throughput = 50
+
+[porth.smsc.op-b]
+host = "smsc.op-b.example"
+system_id = "porth"
+password = "secret-b"
+throughput = 20
+
+[porth.routing]
+default = "op-a"
+
+[porth.routing.prefixes]
+"4470" = "op-b"
+"4475" = "op-b"
 
 [porth.delivery]
 max_retries = 5
 retry_delay = 10
 worker_count = 10
-throughput = 50
 
 [porth.mo]
 url = "http://app.example/mo?from=%p&text=%a&charset=%C"

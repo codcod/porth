@@ -43,6 +43,7 @@ def make(handler=None, settings=None, uow_factory=None):
         message_text='hi',
         protocol='http',
         status=MessageStatus.QUEUED,  # as taken off the queue
+        smsc='a',
     )
     uow_factory.repo.messages[message.message_id] = copy.deepcopy(message)
     return engine, message
@@ -60,8 +61,8 @@ async def test_success_marks_sent_with_smsc_id():
     assert stored.sent_at == message.sent_at and stored.sent_at.tzinfo is not None
     assert stored.protocol_data['smsc_message_ids'] == ['smsc-7', 'smsc-8']
     assert engine.uow_factory.repo.smsc_ids == {
-        'smsc-7': message.message_id,
-        'smsc-8': message.message_id,
+        ('a', 'smsc-7'): message.message_id,
+        ('a', 'smsc-8'): message.message_id,
     }
     assert engine.uow_factory.uows[-1].committed
 
@@ -99,8 +100,8 @@ async def test_failing_sent_write_is_retried_not_resent(monkeypatch):
     assert len(engine.uow_factory.uows) == 3
     assert engine.stored(message).status == MessageStatus.SENT
     assert engine.uow_factory.repo.smsc_ids == {
-        'smsc-7': message.message_id,
-        'smsc-8': message.message_id,
+        ('a', 'smsc-7'): message.message_id,
+        ('a', 'smsc-8'): message.message_id,
     }
 
 

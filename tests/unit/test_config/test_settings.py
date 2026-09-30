@@ -17,7 +17,8 @@ def test_minimal_table_gives_defaults(tmp_path):
     settings = load(tmp_path, '[porth]\n')
     assert settings.http.port == 8080
     assert settings.kannel.port == 13013
-    assert settings.smpp.client is None
+    assert settings.smsc == {}
+    assert (settings.routing.default, settings.routing.prefixes) == (None, {})
     assert settings.delivery.max_retries == 3
     assert settings.mo.reply is True
     assert (settings.db, settings.log_level) == (None, 'INFO')
@@ -37,19 +38,27 @@ port = 9000
 host = "127.0.0.2"
 port = 13100
 default_sender = "12345"
-[porth.smpp.client]
+[porth.smsc.op-a]
 host = "smsc"
 port = 2776
 system_id = "p"
 password = "s"
 system_type = "VMA"
+throughput = 50
+[porth.smsc.op-b]
+host = "smsc-b"
+system_id = "q"
+password = "t"
+[porth.routing]
+default = "op-a"
+[porth.routing.prefixes]
+"4470" = "op-b"
 [porth.delivery]
 max_retries = 1
 retry_delay = 2
 backoff_factor = 1
 max_retry_delay = 60
 worker_count = 4
-throughput = 50
 [porth.mo]
 url = "http://app/mo?from=%p"
 reply = false
@@ -66,18 +75,16 @@ ignored = true
         13100,
         '12345',
     )
-    client = settings.smpp.client
-    assert client is not None
-    assert (client.host, client.port, client.system_id, client.password) == (
-        'smsc',
-        2776,
-        'p',
-        's',
-    )
-    assert client.system_type == 'VMA'
+    assert list(settings.smsc) == ['op-a', 'op-b']
+    a, b = settings.smsc['op-a'], settings.smsc['op-b']
+    assert (a.host, a.port, a.system_id, a.password) == ('smsc', 2776, 'p', 's')
+    assert (a.system_type, a.throughput) == ('VMA', 50)
+    assert (b.host, b.port, b.system_type, b.throughput) == ('smsc-b', 2775, '', None)
+    assert settings.routing.default == 'op-a'
+    assert settings.routing.prefixes == {'4470': 'op-b'}
     d = settings.delivery
     assert (d.max_retries, d.retry_delay, d.backoff_factor) == (1, 2, 1)
-    assert (d.max_retry_delay, d.worker_count, d.throughput) == (60, 4, 50)
+    assert (d.max_retry_delay, d.worker_count) == (60, 4)
     assert (settings.mo.url, settings.mo.reply) == ('http://app/mo?from=%p', False)
 
 
@@ -90,8 +97,12 @@ def test_host_only_kannel_keeps_kannel_default_port(tmp_path):
     ('text', 'key'),
     [
         ('[porth]\ndebug = true\n', 'porth.debug'),
-        ('[porth.smpp]\nservers = []\n', 'porth.smpp.servers'),
-        ('[porth.smpp]\nclients = []\n', 'porth.smpp.clients'),
+        ('[porth.smpp.client]\nhost = "h"\n', 'porth.smpp'),
+        ('[porth.delivery]\nthroughput = 50\n', 'porth.delivery.throughput'),
+        (
+            '[porth.smsc.a]\nhost = "h"\nsystem_id = "p"\npassword = "s"\nx = 1\n',
+            'porth.smsc.a.x',
+        ),
     ],
 )
 def test_unknown_key_raises_naming_it(tmp_path, text, key):
@@ -105,10 +116,13 @@ def test_unknown_key_raises_naming_it(tmp_path, text, key):
         ('[porth.http]\nport = "8080"\n', 'porth.http.port'),
         ('[porth.delivery]\nworker_count = true\n', 'porth.delivery.worker_count'),
         (
-            '[porth.smpp.client]\nhost = "h"\nsystem_id = "p"\npassword = "s"\n'
+            '[porth.smsc.a]\nhost = "h"\nsystem_id = "p"\npassword = "s"\n'
             'port = 2775.0\n',
-            'porth.smpp.client.port',
+            'porth.smsc.a.port',
         ),
+        ('[porth]\nsmsc = 1\n', 'porth.smsc'),
+        ('[porth.smsc]\na = 1\n', 'porth.smsc.a'),
+        ('[porth.routing.prefixes]\n"30" = 1\n', 'porth.routing.prefixes.30'),
         ('[porth.mo]\nreply = "yes"\n', 'porth.mo.reply'),
         ('[porth.kannel]\ndefault_sender = 12345\n', 'porth.kannel.default_sender'),
         ('[porth]\nhttp = 1\n', 'porth.http'),
@@ -120,8 +134,8 @@ def test_wrong_type_raises_naming_key(tmp_path, text, key):
 
 
 def test_missing_required_key_raises_naming_it(tmp_path):
-    text = '[porth.smpp.client]\nsystem_id = "p"\npassword = "s"\n'
-    with pytest.raises(ValueError, match='porth.smpp.client.host is required'):
+    text = '[porth.smsc.a]\nsystem_id = "p"\npassword = "s"\n'
+    with pytest.raises(ValueError, match='porth.smsc.a.host is required'):
         load(tmp_path, text)
 
 

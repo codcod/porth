@@ -11,13 +11,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from porth.config.settings import Settings
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.routing import Router
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 logger = logging.getLogger(__name__)
 
 
 def create_http_app(
-    message_queue: MessageQueue,
+    queues: tp.Mapping[str, MessageQueue],
+    router: Router,
     uow_factory: tp.Callable[[], AbstractUnitOfWork],
     settings: Settings,
 ) -> web.Application:
@@ -25,7 +27,8 @@ def create_http_app(
     app = web.Application()
 
     # Store dependencies in app
-    app['message_queue'] = message_queue
+    app['queues'] = queues
+    app['router'] = router
     app['uow_factory'] = uow_factory
     app['settings'] = settings
 
@@ -79,6 +82,8 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             },
             status=MessageStatus.QUEUED,
         )
+        # NoRoute is a 400 like any other rejection
+        message.smsc = request.app['main_app']['router'].route(message.destination_addr)
     except Exception as e:
         logger.error(f'Error sending SMS via HTTP API: {e}')
         return web.json_response(
@@ -97,7 +102,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             {'error': 'Failed to send SMS', 'details': 'message store unavailable'},
             status=503,
         )
-    await main_app['message_queue'].put(message)
+    await main_app['queues'][message.smsc].put(message)
 
     logger.info(f'HTTP API: Queued message {message.message_id}')
     return web.json_response(
@@ -139,11 +144,11 @@ def _ts(dt: tp.Optional[datetime]) -> tp.Optional[str]:
 async def health_check(request: web_request.Request) -> web_response.Response:
     """Health check endpoint."""
 
-    message_queue = request.app['message_queue']
+    queues = request.app['queues']
 
     health_data = {
         'status': 'healthy',
-        'queue_size': message_queue.qsize(),
+        'queue_size': sum(q.qsize() for q in queues.values()),
         'timestamp': '2024-01-01T00:00:00Z',  # TODO: Use actual timestamp
     }
 

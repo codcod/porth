@@ -18,9 +18,9 @@ from porth.config.settings import (
     DeliveryConfig,
     HTTPConfig,
     KannelConfig,
+    RoutingConfig,
     Settings,
     SMPPClientConfig,
-    SMPPConfig,
 )
 from porth.main import SMSGateway
 from tests.integration.conftest import DSN
@@ -101,20 +101,22 @@ async def env(database):
     await engine.dispose()
 
 
-def gateway(smsc: SMSC, kannel_port: int) -> SMSGateway:
+def gateway(smsc: SMSC, kannel_port: int, name: str = 'a') -> SMSGateway:
+    """A gateway whose one SMSC, named name, takes every number."""
     return SMSGateway(
         Settings(
             db=DSN,
             http=HTTPConfig(host='127.0.0.1', port=0),
             kannel=KannelConfig(host='127.0.0.1', port=kannel_port),
-            smpp=SMPPConfig(
-                client=SMPPClientConfig(
+            smsc={
+                name: SMPPClientConfig(
                     host='127.0.0.1',
                     port=smsc.port,
                     system_id='porth',
                     password='pw',
                 )
-            ),
+            },
+            routing=RoutingConfig(default=name),
             delivery=DeliveryConfig(retry_delay=60, worker_count=1),
         )
     )
@@ -164,25 +166,28 @@ async def until(condition, timeout: float = 10) -> None:
             await asyncio.sleep(0.05)
 
 
-async def send_through_restarts(env, smsc: SMSC) -> str:
+async def send_through_restarts(
+    env, smsc: SMSC, first_name: str = 'a', second_name: str = 'a'
+) -> str:
     """Gateway 1 accepts a message while the SMSC is down and stops; gateway 2 sends
-    it once the SMSC is up and stops. Returns its id, left `sent`."""
+    it once the SMSC is up and stops. Each names the SMSC as given. Returns its id,
+    left `sent`."""
     engine, ids, target = env
     kannel_port = free_port()
 
-    first = gateway(smsc, kannel_port)
+    first = gateway(smsc, kannel_port, first_name)
     await first.start()
     try:
         message_id = await sendsms(kannel_port, smsc.text, target.url())
         ids.append(message_id)
         # its first attempt fails (no SMSC), and the retry waits 60 s
-        await until(lambda: first.delivery_engine._retries)
+        await until(lambda: first.engines[first_name]._retries)
     finally:
         await first.stop()
     assert await status(engine, message_id) == 'queued'
 
     await smsc.start()
-    second = gateway(smsc, kannel_port)
+    second = gateway(smsc, kannel_port, second_name)
     await second.start()
     try:
         await until(lambda: _is(engine, message_id, 'sent'))
@@ -260,3 +265,18 @@ async def test_dlr_url_call_cut_off_by_a_stop_is_made_after_restart(env):
 
 async def _not(awaitable) -> bool:
     return not await awaitable
+
+
+@pytest.mark.asyncio
+async def test_message_whose_smsc_was_removed_is_rerouted_on_restart(env):
+    engine, _, _ = env
+    smsc = SMSC(f'reroute {uuid.uuid4()}')
+    try:
+        message_id = await send_through_restarts(env, smsc, 'old', 'new')
+    finally:
+        await smsc.stop()
+    async with engine.connect() as conn:
+        stored = await conn.scalar(
+            sa.select(messages.c.smsc).where(messages.c.message_id == message_id)
+        )
+    assert stored == 'new'

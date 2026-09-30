@@ -20,18 +20,26 @@ max_retries = 3
 retry_delay = 5
 backoff_factor = 2
 max_retry_delay = 300
-worker_count = 10
-# throughput = 50  # submit_sm PDUs/s; unset = unlimited
+worker_count = 10  # per SMSC
 
 [porth.mo]
 # url = "http://localhost:8000/mo?from=%p&to=%P&text=%a&coding=%C"
 reply = true
 
-# One SMSC; without this table porth accepts messages but does not bind. compose's
-# smppai SMSC accepts any system_id/password (publish its port 2775 to bind from the host).
-# [porth.smpp.client]
+# SMSCs, one table each, named by the table's key; without any, porth accepts no
+# message (nothing routes). compose's smppai SMSC accepts any system_id/password
+# (publish its port 2775 to bind from the host).
+# [porth.smsc.local]
 # host = "localhost"
 # port = 2775
 # system_id = "porth"
 # password = "secret"
 # system_type = ""
+# throughput = 50  # submit_sm PDUs/s; unset = unlimited
+
+# Which SMSC a number goes out through: the longest matching prefix (digits, matched
+# without a leading +), else default.
+# [porth.routing]
+# default = "local"
+# [porth.routing.prefixes]
+# "30" = "local"

@@ -24,10 +24,27 @@
 
 A message becomes `delivered`, or `expired`, only from a delivery receipt.
 
+== Routing
+
+Each message is routed once, when it is submitted, and keeps its SMSC through every retry
+and restart. <<Routing rules>> gives the rules.
+
+* A number that nothing routes is refused at submit, and nothing is stored. The Kannel API
+  drops it from a request with several numbers, and answers `403` only when none routes. The
+  HTTP API answers `400`.
+* A message is not routed again when its SMSC is slow or down: it waits for that SMSC, and
+  retries there.
+* At startup, an unsent message whose SMSC is no longer configured is routed again by the
+  current rules, or ends `failed` if nothing routes it.
+* Each SMSC has its own queue, its own `delivery.worker_count` workers and its own bind. A
+  slow or unreachable SMSC holds up only its own messages.
+* A reply to a mobile-originated message goes out through the SMSC the MO arrived on, not
+  through the routing rules.
+
 == Throughput cap
 
-With `delivery.throughput` set, {product} sends at most that many `submit_sm` PDUs in any
-one-second window, across all workers together. Sends are spaced evenly, so there is no burst
+With an SMSC's `throughput` set, {product} sends it at most that many `submit_sm` PDUs in any
+one-second window, across its workers together. Each SMSC has its own cap. Sends are spaced evenly, so there is no burst
 after an idle spell. A concatenated message counts once per part, and its parts go out back
 to back. A worker that would go over the cap waits for its turn. A worker that waited through
 a rebind is still spaced when the bind comes up. The wait is not a failure and does not use up
@@ -68,7 +85,8 @@ Spaces and `-` in numbers are ignored.
 
 == The SMSC bind
 
-{product} opens one transceiver bind to the configured SMSC.
+{product} opens one transceiver bind to each configured SMSC. What follows holds for each
+bind on its own.
 
 * If the bind fails at startup, the gateway still starts and retries the bind every 10 s.
 * A bind that is lost, or that the SMSC unbinds, is reopened within 10 s, even when nothing
@@ -101,7 +119,8 @@ message on as follows:
 `delivered_at` is the time the last part's receipt arrived, in UTC. HTTP API clients see
 the new status on their next poll. For a Kannel `dlr-url` callback, see <<Delivery reports>>.
 
-* A receipt is matched by the exact SMSC message id. A receipt whose id {product} does not
+* A receipt is matched by the SMSC it arrived from and the exact SMSC message id, so two
+  SMSCs that issue the same id never mix up their messages. A receipt whose id {product} does not
   know yet is looked up again for about 15 s, so a part's receipt that arrives before the
   later parts are submitted still counts. After that, it is logged at info and ignored. If
   every receipt is ignored, the SMSC reports ids in a different format from its `submit_sm`

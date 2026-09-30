@@ -35,3 +35,7 @@ class QueueError(PorthException):
     """Message queue errors."""
 
     pass
+
+
+class NoRoute(MessageError):
+    """No SMSC takes the number, or the requested SMSC does not exist."""

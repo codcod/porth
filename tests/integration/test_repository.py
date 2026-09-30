@@ -67,6 +67,7 @@ async def test_add_get_round_trips_every_column(db):
         max_retries=5,
         dlr_requested=False,
         dlr_url='http://x/?d=%d',
+        smsc='op-a',
     )
     await add(engine, message)
     async with SqlAlchemyUnitOfWork(engine) as uow:
@@ -95,6 +96,7 @@ async def test_update_writes_the_status_fields(db):
     message.retry_count = 1
     message.sent_at = datetime.now(timezone.utc)
     message.protocol_data['smsc_message_ids'] = ['s1']
+    message.smsc = 'op-b'
     async with SqlAlchemyUnitOfWork(engine) as uow:
         await uow.messages.update(message)
         await uow.commit()
@@ -110,12 +112,30 @@ async def test_smsc_id_maps_to_the_latest_message(db):
     await add(engine, first, second)
     for message in (first, second):
         async with SqlAlchemyUnitOfWork(engine) as uow:
-            await uow.messages.add_smsc_ids(message.message_id, [smsc_id, 'other'])
+            await uow.messages.add_smsc_ids(message.message_id, 'a', [smsc_id, 'other'])
             await uow.commit()
     async with SqlAlchemyUnitOfWork(engine) as uow:
-        got = await uow.messages.get_by_smsc_id_for_update(smsc_id)
-        assert await uow.messages.get_by_smsc_id_for_update('nope') is None
+        got = await uow.messages.get_by_smsc_id_for_update('a', smsc_id)
+        assert await uow.messages.get_by_smsc_id_for_update('a', 'nope') is None
+        assert await uow.messages.get_by_smsc_id_for_update('b', smsc_id) is None
     assert got is not None and got.message_id == second.message_id
+
+
+@pytest.mark.asyncio
+async def test_same_smsc_id_from_two_smscs_is_two_messages(db):
+    engine, ids = db
+    first, second = new(ids), new(ids)
+    smsc_id = f'smsc-{first.message_id}'
+    await add(engine, first, second)
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.add_smsc_ids(first.message_id, 'a', [smsc_id])
+        await uow.messages.add_smsc_ids(second.message_id, 'b', [smsc_id])
+        await uow.commit()
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        got_a = await uow.messages.get_by_smsc_id_for_update('a', smsc_id)
+        got_b = await uow.messages.get_by_smsc_id_for_update('b', smsc_id)
+    assert got_a is not None and got_a.message_id == first.message_id
+    assert got_b is not None and got_b.message_id == second.message_id
 
 
 @pytest.mark.asyncio
@@ -165,7 +185,9 @@ async def test_deleting_a_message_cascades(db):
     message = new(ids)
     await add(engine, message)
     async with SqlAlchemyUnitOfWork(engine) as uow:
-        await uow.messages.add_smsc_ids(message.message_id, [f's-{message.message_id}'])
+        await uow.messages.add_smsc_ids(
+            message.message_id, 'a', [f's-{message.message_id}']
+        )
         await uow.messages.add_callback(message.message_id, 'http://x/')
         await uow.commit()
     async with engine.begin() as conn:
