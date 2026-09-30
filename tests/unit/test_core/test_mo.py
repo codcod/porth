@@ -99,26 +99,30 @@ class App:
         return self.response
 
 
-async def forward(response=None, reply=True, url=None, fail=None):
-    """Hand one MO to a started MOHandler; return (app, queue, store)."""
+async def forward(
+    response=None, reply=True, url=None, fail=None, sender='306900000001', query='k=%k'
+):
+    """Hand one MO, arriving on SMSC a, to a started MOHandler; return (app, queue,
+    store), queue being a's."""
     app = App(response or web.Response(text='Thanks'))
     web_app = web.Application()
     web_app.router.add_get('/mo', app)
     server = TestServer(web_app)
     await server.start_server()
-    queue, uow_factory = MessageQueue(), FakeUowFactory()
+    queues, uow_factory = {'a': MessageQueue(), 'b': MessageQueue()}, FakeUowFactory()
     uow_factory.fail = fail
     if url is None:
-        url = str(server.make_url('/mo')) + '?k=%k'
-    handler = MOHandler(queue, uow_factory, MOConfig(url=url or None, reply=reply))
+        url = str(server.make_url('/mo')) + '?' + query
+    handler = MOHandler(queues, uow_factory, MOConfig(url=url or None, reply=reply))
     await handler.start()
     try:
-        handler.on_mo(mo('306900000001'))
+        handler.on_mo(mo(sender), 'a')
         await asyncio.gather(*handler._tasks)
     finally:
         await handler.stop()
         await server.close()
-    return app, queue, uow_factory.repo
+    assert queues['b'].empty()  # a reply never leaves through another SMSC
+    return app, queues['a'], uow_factory.repo
 
 
 @pytest.mark.asyncio
@@ -176,3 +180,18 @@ async def test_reply_not_stored_is_not_sent(caplog):
     _, queue, store = await forward(fail=OSError('database down'))
     assert queue.empty()
     assert 'reply not stored, not sent' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reply_goes_back_through_the_arriving_smsc():
+    # Were it routed, +44... could go elsewhere; the MO arrived on a, so a it is
+    _, queue, store = await forward(sender='447000000001')
+    reply = await queue.get()
+    assert reply.smsc == 'a'
+    assert store.messages[reply.message_id].smsc == 'a'
+
+
+@pytest.mark.asyncio
+async def test_percent_i_is_the_arriving_smsc():
+    app, _, _ = await forward(query='i=%i')
+    assert [dict(r.query) for r in app.requests] == [{'i': 'a'}]

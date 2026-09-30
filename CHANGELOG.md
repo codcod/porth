@@ -36,9 +36,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   startup, messages not yet sent are queued again and unfinished `dlr-url` calls are made
   again. Sent messages are not resent. The database is the new, required `db` setting
   (`PORTH_DB`); `make db-up` starts one and `make migrate` creates its tables (POR-018).
-- `delivery.throughput` caps `submit_sm` PDUs in any one-second window, spaced evenly,
-  across all delivery workers, as Kannel's per-SMSC `throughput`; a concatenated message
-  counts once per part. Unset keeps today's unlimited rate (POR-014, POR-024).
+- An SMSC's `throughput` caps its `submit_sm` PDUs in any one-second window, spaced evenly,
+  across its delivery workers, as Kannel's per-SMSC `throughput`; a concatenated message
+  counts once per part. Unset keeps today's unlimited rate (POR-014, POR-024, POR-020).
+- porth binds to several SMSCs, each a `[porth.smsc.<name>]` table, and routes each message
+  once at submit: to the SMSC a Kannel client names with `smsc`, else the longest matching
+  destination prefix in `[porth.routing.prefixes]` (digits, matched without a leading `+`),
+  else `routing.default`. Each SMSC has its own queue, workers and bind, so a slow or down
+  SMSC holds up only its own messages. Receipts correlate by SMSC and id, an MO reply leaves
+  through the SMSC the MO arrived on, and `%i` in `mo.url` and `dlr-url` is the SMSC's name
+  (POR-020).
+- `python -m porth.main --check <file>`, which `make config-check` now runs, validates a
+  configuration as startup does, routing rules and each SMSC's `throughput` included,
+  without connecting to anything (POR-020).
 
 **Changed**
 
@@ -49,6 +59,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `[porth.smpp.client]` table. `log_level` takes effect, and `make migrate` reads `db` from the
   same file (POR-012).
 - Python 3.13 or later is required (POR-018).
+- **Breaking:** `[porth.smpp.client]` became `[porth.smsc.<name>]`, and `delivery.throughput`
+  became each SMSC's `throughput`. A number no SMSC takes is refused at submit: Kannel's
+  `403 Not routable. Do not try again.` when no number in the request routes (others are
+  dropped), the HTTP API's `400`. `delivery.worker_count` is per SMSC (POR-020).
 - Addresses carry their SMPP TON/NPI: `+<digits>` is sent as international/ISDN without the
   `+`, and a non-numeric sender as alphanumeric. Before, every address went out as given with
   TON/NPI 0 (POR-011).

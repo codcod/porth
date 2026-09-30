@@ -161,13 +161,15 @@ class DeliveryEngine:
         message.sent_at = datetime.now(timezone.utc)
         ids = result['smsc_message_ids']
         message.protocol_data['smsc_message_ids'] = ids
+        smsc = message.smsc
+        assert smsc is not None  # set at submit, or by recovery
         # Outside the send's try: the SMSC has the message, so a failed write must
         # never resend it now. Retried, since left `queued` a restart would resend it.
         for wait in (*_SENT_WRITE_WAITS, None):
             try:
                 async with self.uow_factory() as uow:
                     await uow.messages.update(message)
-                    await uow.messages.add_smsc_ids(message.message_id, ids)
+                    await uow.messages.add_smsc_ids(message.message_id, smsc, ids)
                     await uow.commit()
                 break
             except Exception:
@@ -182,7 +184,7 @@ class DeliveryEngine:
                     f'retrying in {wait}s'
                 )
                 await asyncio.sleep(wait)
-        logger.info(f'Message {message.message_id} sent')
+        logger.info(f'Message {message.message_id} sent through SMSC {smsc}')
 
     async def _save(self, message: SMSMessage) -> None:
         """Write the message's status and retry count; log a failed write."""

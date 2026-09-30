@@ -60,11 +60,11 @@ class MOHandler:
 
     def __init__(
         self,
-        message_queue: MessageQueue,
+        queues: tp.Mapping[str, MessageQueue],
         uow_factory: tp.Callable[[], AbstractUnitOfWork],
         config: MOConfig,
     ):
-        self.message_queue = message_queue
+        self.queues = queues  # SMSC name -> its engine's queue
         self.uow_factory = uow_factory
         self.config = config
         self._session: tp.Optional[aiohttp.ClientSession] = None
@@ -85,21 +85,24 @@ class MOHandler:
         await self._session.close()
         self._session = None
 
-    def on_mo(self, msg: Message) -> None:
-        """Forward one MO (smppai's, reassembled) in its own task."""
+    def on_mo(self, msg: Message, smsc: str) -> None:
+        """Forward one MO (smppai's, reassembled), from the SMSC named smsc, in its
+        own task."""
         if not self.config.url:
             logger.info(f'MO from {msg.sender.addr} dropped: mo.url is not set')
             return
         if msg.text is None:
             logger.info(f'MO from {msg.sender.addr} dropped: text not decodable')
             return
-        url = expand_url(self.config.url, mo_values(msg, datetime.now(timezone.utc)))
+        values = mo_values(msg, datetime.now(timezone.utc))
+        values['i'] = smsc
+        url = expand_url(self.config.url, values)
         # Own task, so smppai's receive loop never waits on the application
-        task = asyncio.create_task(self._forward(msg, url))
+        task = asyncio.create_task(self._forward(msg, smsc, url))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _forward(self, msg: Message, url: str) -> None:
+    async def _forward(self, msg: Message, smsc: str, url: str) -> None:
         assert self._session is not None
         sender, body = msg.sender.addr, ''
         try:
@@ -128,6 +131,8 @@ class MOHandler:
             protocol_data={'dlr_mask': 0},
             dlr_requested=False,
             status=MessageStatus.QUEUED,
+            # The SMSC the MO arrived on, not routed (design.md 1.28)
+            smsc=smsc,
         )
         # Durable before queueing, as the submit handlers do
         try:
@@ -137,5 +142,5 @@ class MOHandler:
         except Exception as e:
             logger.warning(f'MO from {sender}: reply not stored, not sent: {e!r}')
             return
-        await self.message_queue.put(reply)
+        await self.queues[smsc].put(reply)
         logger.info(f'MO from {sender}: reply {reply.message_id} queued')

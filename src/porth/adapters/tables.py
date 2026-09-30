@@ -23,6 +23,7 @@ messages = sa.Table(
     sa.Column('max_retries', sa.Integer(), nullable=False),
     sa.Column('dlr_requested', sa.Boolean(), nullable=False),
     sa.Column('dlr_url', sa.Text(), nullable=True),
+    sa.Column('smsc', sa.Text(), nullable=True),  # null: stored before routing
     sa.CheckConstraint(
         "status IN ('pending','queued','sent','delivered','failed','expired')",
         name='messages_status_check',
@@ -30,10 +31,11 @@ messages = sa.Table(
     sa.CheckConstraint("protocol IN ('http','kannel')", name='messages_protocol_check'),
 )
 
-# The receipt lookup index: SMSC message id -> the latest message that got it
+# The receipt lookup index: (SMSC, its message id) -> the latest message that got it
 smsc_ids = sa.Table(
     'smsc_ids',
     metadata,
+    sa.Column('smsc', sa.Text(), primary_key=True),
     sa.Column('smsc_id', sa.Text(), primary_key=True),
     sa.Column(
         'message_id',

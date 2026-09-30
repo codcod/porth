@@ -6,8 +6,10 @@ import typing as tp
 from aiohttp import web
 from sqlalchemy.exc import SQLAlchemyError
 
+from porth.core.exceptions import NoRoute
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
+from porth.core.routing import Router
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 from porth.protocols.http.api import text_field
 
@@ -18,13 +20,15 @@ _TO_CHARS = frozenset('0123456789+-')
 
 
 def create_kannel_app(
-    message_queue: MessageQueue,
+    queues: tp.Mapping[str, MessageQueue],
+    router: Router,
     uow_factory: tp.Callable[[], AbstractUnitOfWork],
     default_sender: tp.Optional[str] = None,
 ) -> web.Application:
     """Create the aiohttp application serving Kannel's GET /cgi-bin/sendsms."""
     app = web.Application()
-    app['message_queue'] = message_queue
+    app['queues'] = queues
+    app['router'] = router
     app['uow_factory'] = uow_factory
     app['default_sender'] = default_sender
     app.router.add_get('/cgi-bin/sendsms', kannel_send_sms, allow_head=False)
@@ -60,6 +64,16 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         except ValueError:
             dlr_mask = 0
 
+        # Each recipient routed once (smsc: an override, not Kannel's hint); one
+        # nothing routes is dropped, as Kannel does
+        smsc = params.get('smsc') or None
+        routes = {}
+        for to in recipients:
+            try:
+                routes[to] = request.app['router'].route(to, smsc)
+            except NoRoute as e:
+                logger.info(f'Kannel API: dropping recipient {to!r}: {e}')
+
         # One internal message per recipient; username/password are never read (design.md §2)
         messages = [
             SMSMessage(
@@ -70,8 +84,9 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
                 protocol_data={'dlr_mask': dlr_mask},
                 dlr_url=params.get('dlr-url'),
                 status=MessageStatus.QUEUED,
+                smsc=route,
             )
-            for to in recipients
+            for to, route in routes.items()
         ]
     except Exception as e:
         logger.error(f'Error in Kannel SMS send: {e}')
@@ -79,6 +94,13 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             text=f'3: Failed to send SMS: {str(e)}',
             content_type='text/plain',
             status=400,
+        )
+    if not messages:
+        # Kannel's answer, word for word
+        return web.Response(
+            text='Not routable. Do not try again.',
+            content_type='text/plain',
+            status=403,
         )
 
     # Durable before accepted (design.md §4.6), and all or none of the request's messages
@@ -95,7 +117,7 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             status=503,
         )
     for message in messages:
-        await request.app['message_queue'].put(message)
+        await request.app['queues'][message.smsc].put(message)
         logger.info(f'Kannel API: Queued message {message.message_id}')
 
     ids = ''.join(f'\nMessage-ID: {m.message_id}' for m in messages)

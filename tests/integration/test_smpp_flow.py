@@ -1,19 +1,30 @@
 """Integration test: real submit_sm over TCP to an smppai test SMSC."""
 
 import asyncio
+import functools
 import socket
+
+import aiohttp
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from smpp import NpiType, SMPPServer, TonType
 
-from porth.config.settings import MOConfig, Settings, SMPPClientConfig
+from porth.config.settings import (
+    HTTPConfig,
+    KannelConfig,
+    MOConfig,
+    RoutingConfig,
+    Settings,
+    SMPPClientConfig,
+)
 from porth.core.delivery import DeliveryEngine
 from porth.core.dlr import DLRHandler
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
+from porth.main import SMSGateway
 from porth.protocols.smpp.client import SMPPClient
 from tests.conftest import FakeUowFactory
 
@@ -47,6 +58,7 @@ async def test_smpp_message_flow(uow_factory):
         destination_addr='5678',
         message_text='Hello @ €',
         protocol='http',
+        smsc='a',
     )
 
     await uow_factory.repo.add(message)
@@ -61,7 +73,7 @@ async def test_smpp_message_flow(uow_factory):
     assert received[0].data_coding == 0
     assert received[0].get_message_text() == 'Hello @ €'
     assert uow_factory.repo.messages[message.message_id].status == MessageStatus.SENT
-    assert uow_factory.repo.smsc_ids == {'smsc-1': message.message_id}
+    assert uow_factory.repo.smsc_ids == {('a', 'smsc-1'): message.message_id}
 
 
 @pytest.mark.asyncio
@@ -87,6 +99,7 @@ async def test_long_message_goes_out_in_parts(uow_factory):
         destination_addr='5678',
         message_text='a' * 200,
         protocol='http',
+        smsc='a',
     )
 
     await uow_factory.repo.add(message)
@@ -123,9 +136,10 @@ async def send_and_receipt(message: SMSMessage) -> SMSMessage:
     engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
-        on_receipt=handler.on_receipt,
+        on_receipt=functools.partial(handler.on_receipt, smsc='a'),
     )
     engine.smpp_client = porth_client
+    message.smsc = 'a'
     await store.add(message)
 
     await server.start()
@@ -214,12 +228,14 @@ async def test_mo_reaches_the_application_and_its_reply_goes_back(uow_factory):
 
     queue = MessageQueue()
     handler = MOHandler(
-        queue, uow_factory, MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p')
+        {'a': queue},
+        uow_factory,
+        MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p'),
     )
     engine = DeliveryEngine(queue, uow_factory, Settings())
     porth_client = SMPPClient(
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
-        on_mo=handler.on_mo,
+        on_mo=functools.partial(handler.on_mo, smsc='a'),
     )
     engine.smpp_client = porth_client
 
@@ -251,3 +267,53 @@ async def test_mo_reaches_the_application_and_its_reply_goes_back(uow_factory):
     assert pdu.destination_addr == '306900000001'
     assert pdu.dest_addr_ton == TonType.INTERNATIONAL
     assert pdu.get_message_text() == 'Thanks'
+
+
+@pytest.mark.asyncio
+async def test_each_number_goes_out_through_its_prefixs_smsc(uow_factory):
+    """Two smppai SMSCs, a (30...) and b (44...): each gets exactly its own number."""
+    received: dict[str, list[str]] = {'a': [], 'b': []}
+    servers, config = [], {}
+    for name in received:
+        port = free_port()
+        server = SMPPServer(host='127.0.0.1', port=port, setup_signal_handlers=False)
+        server.on_message_received = functools.partial(
+            lambda got, server, session, pdu: got.append(pdu.destination_addr) or 'x',
+            received[name],
+        )
+        servers.append(server)
+        config[name] = SMPPClientConfig(
+            host='127.0.0.1', port=port, system_id='porth', password='pw'
+        )
+    kannel_port = free_port()
+    gateway = SMSGateway(
+        Settings(
+            http=HTTPConfig(host='127.0.0.1', port=0),
+            kannel=KannelConfig(host='127.0.0.1', port=kannel_port),
+            smsc=config,
+            routing=RoutingConfig(prefixes={'30': 'a', '44': 'b'}),
+        ),
+        uow_factory,
+    )
+    for server in servers:
+        await server.start()
+    await gateway.start()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f'http://127.0.0.1:{kannel_port}/cgi-bin/sendsms',
+                params={
+                    'from': '1234',
+                    'to': '306900000001 447000000001',
+                    'text': 'hi',
+                },
+            ) as response:
+                assert response.status == 200
+        async with asyncio.timeout(5):
+            while not (received['a'] and received['b']):
+                await asyncio.sleep(0.01)
+    finally:
+        await gateway.stop()
+        for server in servers:
+            await server.stop()
+    assert received == {'a': ['306900000001'], 'b': ['447000000001']}

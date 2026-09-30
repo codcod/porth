@@ -16,7 +16,7 @@ class FakeMessageRepository(AbstractMessageRepository):
 
     def __init__(self) -> None:
         self.messages: dict[str, SMSMessage] = {}
-        self.smsc_ids: dict[str, str] = {}
+        self.smsc_ids: dict[tuple[str, str], str] = {}  # (smsc, smsc_id) -> id
         self.dlr_callbacks: dict[str, str] = {}
 
     @tp.override
@@ -32,17 +32,19 @@ class FakeMessageRepository(AbstractMessageRepository):
     @tp.override
     async def update(self, message: SMSMessage) -> None:
         stored = self.messages[message.message_id]
-        for field in ('status', 'retry_count', 'sent_at', 'delivered_at'):
+        for field in ('status', 'retry_count', 'sent_at', 'delivered_at', 'smsc'):
             setattr(stored, field, getattr(message, field))
         stored.protocol_data = copy.deepcopy(message.protocol_data)
 
     @tp.override
-    async def add_smsc_ids(self, message_id: str, ids: list[str]) -> None:
-        self.smsc_ids.update(dict.fromkeys(ids, message_id))
+    async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:
+        self.smsc_ids.update(dict.fromkeys(((smsc, i) for i in ids), message_id))
 
     @tp.override
-    async def get_by_smsc_id_for_update(self, smsc_id: str) -> SMSMessage | None:
-        message_id = self.smsc_ids.get(smsc_id)
+    async def get_by_smsc_id_for_update(
+        self, smsc: str, smsc_id: str
+    ) -> SMSMessage | None:
+        message_id = self.smsc_ids.get((smsc, smsc_id))
         return await self.get(message_id) if message_id else None
 
     @tp.override

@@ -7,16 +7,21 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from porth.core.message import MessageStatus
 from porth.protocols.kannel.api import create_kannel_app
-from tests.unit.test_protocols.test_http_api import RecordingQueue
+from tests.unit.test_protocols.test_http_api import ROUTER, RecordingQueue
 
 PARAMS = {'to': '+306900000000', 'from': 'porth', 'text': 'hi'}
 
 
+def app_for(uow_factory, default_sender=None):
+    queues = {'a': RecordingQueue(uow_factory), 'b': RecordingQueue(uow_factory)}
+    return create_kannel_app(queues, ROUTER, uow_factory, default_sender)
+
+
 @pytest_asyncio.fixture
 async def kannel(uow_factory):
-    app = create_kannel_app(RecordingQueue(uow_factory), uow_factory)
+    app = app_for(uow_factory)
     async with TestClient(TestServer(app)) as client:
-        yield client, app['message_queue']
+        yield client, app['queues']['a']
 
 
 @pytest.mark.asyncio
@@ -117,16 +122,14 @@ async def test_sendsms_rejects_when_no_valid_recipient(kannel):
 async def test_sendsms_default_sender_fills_only_a_missing_from(
     uow_factory, sender, expected
 ):
-    app = create_kannel_app(
-        RecordingQueue(uow_factory), uow_factory, default_sender='ACME'
-    )
+    app = app_for(uow_factory, default_sender='ACME')
     async with TestClient(TestServer(app)) as client:
         params = {'to': '306900000015', 'text': 'hi'}
         if sender is not None:
             params['from'] = sender
         resp = await client.get('/cgi-bin/sendsms', params=params)
         assert resp.status == 200
-        assert (await app['message_queue'].get()).source_addr == expected
+        assert (await app['queues']['a'].get()).source_addr == expected
 
 
 @pytest.mark.asyncio
@@ -160,3 +163,54 @@ async def test_failed_commit_queues_none_of_several_recipients(kannel, uow_facto
     assert resp.status == 503
     assert queue.empty()
     assert uow_factory.repo.messages == {}
+
+
+NOT_ROUTABLE = 'Not routable. Do not try again.'
+
+
+@pytest.mark.asyncio
+async def test_unroutable_recipient_is_dropped(kannel, uow_factory):
+    client, queue = kannel
+    resp = await client.get(
+        '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000005 15550000005'}
+    )
+    assert resp.status == 200
+    first, *id_lines = (await resp.text()).split('\n')
+    assert first == '0: Accepted for delivery'
+    message = await queue.get()
+    assert (message.destination_addr, message.smsc) == ('306900000005', 'a')
+    assert id_lines == [f'Message-ID: {message.message_id}']
+    assert list(uow_factory.repo.messages) == [message.message_id]
+    assert client.app['queues']['b'].empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'params',
+    [
+        {'to': '15550000006 15550000007'},
+        {'to': '306900000004', 'smsc': 'zz'},  # an unknown smsc is an error
+    ],
+    ids=['none-routable', 'unknown-smsc'],
+)
+async def test_nothing_routable_is_kannels_403(kannel, uow_factory, params):
+    client, queue = kannel
+    resp = await client.get('/cgi-bin/sendsms', params={**PARAMS, **params})
+    assert resp.status == 403
+    assert await resp.text() == NOT_ROUTABLE
+    assert queue.empty() and client.app['queues']['b'].empty()
+    assert uow_factory.repo.messages == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('smsc, expected', [('b', 'b'), ('', 'a')])
+async def test_smsc_overrides_the_prefix_and_empty_is_absent(
+    kannel, uow_factory, smsc, expected
+):
+    client, _ = kannel
+    resp = await client.get(
+        '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000004', 'smsc': smsc}
+    )
+    assert resp.status == 200
+    message = await client.app['queues'][expected].get()
+    assert uow_factory.repo.messages[message.message_id].smsc == expected

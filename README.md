@@ -77,11 +77,23 @@ log_level = "INFO"
 host = "0.0.0.0"
 port = 8080
 
-[porth.smpp.client]
-host = "smsc.example.com"
+[porth.smsc.op-a]
+host = "smsc.op-a.example"
 port = 2775
 system_id = "porth"
 password = "secret"
+throughput = 50  # submit_sm PDUs/s; unset = unlimited
+
+[porth.smsc.op-b]
+host = "smsc.op-b.example"
+system_id = "porth"
+password = "secret-b"
+
+[porth.routing]
+default = "op-a"
+
+[porth.routing.prefixes]
+"4470" = "op-b"
 
 [porth.delivery]
 max_retries = 3
@@ -91,9 +103,10 @@ max_retry_delay = 300
 worker_count = 10
 ```
 
-`[porth.smpp.client]` is the single upstream SMSC. porth binds to it as a transceiver and
-sends every message there as one `submit_sm` per part. A message is marked `sent` once the
-SMSC accepts every part. If it is absent, messages end `failed` after their
-retries. If the SMSC is unreachable, the gateway still starts and retries the bind every
+Each `[porth.smsc.<name>]` is an upstream SMSC. porth binds to each as a transceiver, with
+its own queue, workers and `throughput` cap. A message goes out through the SMSC of the
+longest `[porth.routing.prefixes]` entry its number starts with (without a leading `+`), else
+the `default`; a number nothing routes is refused at submit. It is sent as one `submit_sm`
+per part, and marked `sent` once the SMSC accepts every part. If the SMSC is unreachable, the gateway still starts and retries the bind every
 10 s. Text longer than one SMS (160 GSM-7 characters, where extension characters such as `€`
 count as two, or 70 UCS-2 characters) is sent as a concatenated SMS of up to 255 parts.

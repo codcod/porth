@@ -28,11 +28,14 @@ class SMPPClientConfig:
     system_id: str
     password: str
     system_type: str = ''
+    # ponytail: int, so at least 1/s; sub-1 TPS needs a float
+    throughput: tp.Optional[int] = None  # submit_sm PDUs/s; unset = unlimited
 
 
 @dataclasses.dataclass(kw_only=True)
-class SMPPConfig:
-    client: tp.Optional[SMPPClientConfig] = None  # unset: no bind
+class RoutingConfig:
+    default: tp.Optional[str] = None  # the SMSC for a number no prefix matches
+    prefixes: dict[str, str] = dataclasses.field(default_factory=dict)  # digits -> SMSC
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -43,9 +46,7 @@ class DeliveryConfig:
     # someone needs them
     backoff_factor: int = 2  # 1: fixed retry_delay
     max_retry_delay: int = 300  # seconds
-    worker_count: int = 10
-    # ponytail: int, so at least 1/s; sub-1 TPS needs a float
-    throughput: tp.Optional[int] = None  # submit_sm PDUs/s; unset = unlimited
+    worker_count: int = 10  # per SMSC
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -59,7 +60,9 @@ class MOConfig:
 class Settings:
     http: HTTPConfig = dataclasses.field(default_factory=HTTPConfig)
     kannel: KannelConfig = dataclasses.field(default_factory=KannelConfig)
-    smpp: SMPPConfig = dataclasses.field(default_factory=SMPPConfig)
+    # SMSC name -> its bind; none: every submit is refused as unroutable
+    smsc: dict[str, SMPPClientConfig] = dataclasses.field(default_factory=dict)
+    routing: RoutingConfig = dataclasses.field(default_factory=RoutingConfig)
     delivery: DeliveryConfig = dataclasses.field(default_factory=DeliveryConfig)
     mo: MOConfig = dataclasses.field(default_factory=MOConfig)
 
@@ -109,7 +112,12 @@ def _coerce(key: str, hint: tp.Any, value: tp.Any) -> tp.Any:
     """Check a TOML value against `hint`; no conversion, anything else is ValueError."""
     if type(None) in tp.get_args(hint):  # Optional[X]: the key is present, so X
         (hint,) = (arg for arg in tp.get_args(hint) if arg is not type(None))
-    if isinstance(hint, type) and dataclasses.is_dataclass(hint):
+    if tp.get_origin(hint) is dict:  # a table of str -> X
+        if isinstance(value, dict):
+            _, item = tp.get_args(hint)
+            return {k: _coerce(f'{key}.{k}', item, v) for k, v in value.items()}
+        hint = dict
+    elif isinstance(hint, type) and dataclasses.is_dataclass(hint):
         if isinstance(value, dict):
             return _build(hint, value, key)
     elif hint is bool:
@@ -120,5 +128,6 @@ def _coerce(key: str, hint: tp.Any, value: tp.Any) -> tp.Any:
             return value
     elif hint is str and isinstance(value, str):
         return value
-    expected = 'a table' if dataclasses.is_dataclass(hint) else hint.__name__
+    table = hint is dict or dataclasses.is_dataclass(hint)
+    expected = 'a table' if table else hint.__name__
     raise ValueError(f'invalid {key}: {value!r} is not {expected}')

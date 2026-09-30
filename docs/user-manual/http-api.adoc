@@ -33,8 +33,9 @@ A queued message returns `200`:
 {"message_id": "3f1c…", "status": "queued", "message": "Message queued for delivery"}
 ----
 
-`200` means the message was queued, not sent. A missing field or a malformed body returns
-`400` with `{"error": …, "details": …}`.
+`200` means the message was queued, not sent. A missing field, a malformed body, or a number
+no SMSC takes (see <<Routing rules>>) returns `400` with `{"error": …, "details": …}`, and
+nothing is stored. The HTTP API has no way to name the SMSC.
 
 == Message status
 

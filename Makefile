@@ -107,7 +107,7 @@ downgrade: ## Revert migrations: make downgrade [rev=-1]
 
 # Configuration
 config-check: ## Validate config/config.toml the way the gateway loads it
-	$(UV) run $(PYTHON) -c "from porth.config.settings import load_settings; load_settings('$(CONFIG_DIR)/config.toml')"
+	$(UV) run $(PYTHON) -m porth.main --check $(CONFIG_DIR)/config.toml
 	@echo "$(CONFIG_DIR)/config.toml is valid"
 
 # Dependencies

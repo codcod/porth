@@ -71,37 +71,40 @@ class DLRHandler:
         await self._session.close()
         self._session = None
 
-    async def on_receipt(self, msg: Message) -> None:
-        """Apply one parsed receipt (smppai's) to the message it reports on.
+    async def on_receipt(self, msg: Message, smsc: str) -> None:
+        """Apply one parsed receipt (smppai's), from the SMSC named smsc, to the
+        message it reports on.
 
         Awaited by the receive loop, so a receipt is committed before its bind lets
         go of it.
         """
         assert msg.receipt is not None
         now = datetime.now(timezone.utc)
-        if await self._apply(msg, now):
+        if await self._apply(msg, smsc, now):
             return
         if not msg.receipt.id:
-            self._ignore(msg)
+            self._ignore(msg, smsc)
             return
-        self._spawn(self._recheck(msg, now))
+        self._spawn(self._recheck(msg, smsc, now))
 
     # ponytail: re-checks live in memory; a crash inside the ~15 s window loses the
     # receipt (design.md §7 item 1), persist unmatched receipts if that bites
-    async def _recheck(self, msg: Message, now: datetime) -> None:
+    async def _recheck(self, msg: Message, smsc: str, now: datetime) -> None:
         for wait in _UNKNOWN_WAITS:
             await asyncio.sleep(wait)
-            if await self._apply(msg, now):
+            if await self._apply(msg, smsc, now):
                 return
-        self._ignore(msg)
+        self._ignore(msg, smsc)
 
     @staticmethod
-    def _ignore(msg: Message) -> None:
+    def _ignore(msg: Message, smsc: str) -> None:
         assert msg.receipt is not None
         # info, not debug: a systematic SMSC id-format mismatch must show up
-        logger.info(f'Receipt for unknown SMSC id {msg.receipt.id!r} ignored')
+        logger.info(
+            f'Receipt for unknown SMSC id {msg.receipt.id!r} from {smsc} ignored'
+        )
 
-    async def _apply(self, msg: Message, now: datetime) -> bool:
+    async def _apply(self, msg: Message, smsc: str, now: datetime) -> bool:
         """Apply the receipt to its message in one transaction; False if its SMSC id
         is unknown. A database error is logged and counts as applied (lost)."""
         receipt = msg.receipt
@@ -113,7 +116,7 @@ class DLRHandler:
             async with self.uow_factory() as uow:
                 # The row lock serialises parts of one message across the receive
                 # loop and the re-check tasks
-                message = await uow.messages.get_by_smsc_id_for_update(smsc_id)
+                message = await uow.messages.get_by_smsc_id_for_update(smsc, smsc_id)
                 if message is None:
                     return False
                 if message.status in _TERMINAL:
@@ -194,6 +197,7 @@ class DLRHandler:
                 'A': text,
                 't': now.strftime('%Y-%m-%d %H:%M'),
                 'T': str(int(now.timestamp())),
+                'i': message.smsc or '',
             },
         )
 

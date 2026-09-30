@@ -7,9 +7,10 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy.exc import SQLAlchemyError
 
-from porth.config.settings import Settings
+from porth.config.settings import RoutingConfig, Settings
 from porth.core.message import MessageStatus
 from porth.core.queue import MessageQueue
+from porth.core.routing import Router
 from porth.protocols.http.api import create_http_app
 
 BODY = {
@@ -32,12 +33,20 @@ class RecordingQueue(MessageQueue):
         await super().put(message)
 
 
+# Two SMSCs: 30... goes out through a, 44... through b; nothing else routes
+ROUTER = Router(('a', 'b'), RoutingConfig(prefixes={'30': 'a', '44': 'b'}))
+
+
 @pytest_asyncio.fixture
-async def http(uow_factory):
-    queue = RecordingQueue(uow_factory)
-    app = create_http_app(queue, uow_factory, Settings())
+async def queues(uow_factory):
+    return {'a': RecordingQueue(uow_factory), 'b': RecordingQueue(uow_factory)}
+
+
+@pytest_asyncio.fixture
+async def http(uow_factory, queues):
+    app = create_http_app(queues, ROUTER, uow_factory, Settings())
     async with TestClient(TestServer(app)) as client:
-        yield client, queue, uow_factory.repo
+        yield client, queues['a'], uow_factory.repo
 
 
 async def submit(client) -> str:
@@ -118,3 +127,42 @@ async def test_empty_dlr_url_is_accepted(http, empty):
     resp = await client.post('/api/v1/sms/send', json={**BODY, 'dlr_url': empty})
     assert resp.status == 200
     assert queue.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_is_routed_to_its_smscs_queue(http, queues):
+    client, queue, store = http
+    resp = await client.post(
+        '/api/v1/sms/send', json={**BODY, 'destination_addr': '+447000000001'}
+    )
+    assert resp.status == 200
+    message_id = (await resp.json())['message_id']
+    assert queue.empty()
+    assert (await queues['b'].get()).smsc == 'b'
+    assert store.messages[message_id].smsc == 'b'
+
+
+@pytest.mark.asyncio
+async def test_unroutable_number_is_400_and_stores_nothing(http, queues):
+    client, _, store = http
+    resp = await client.post(
+        '/api/v1/sms/send', json={**BODY, 'destination_addr': '15550000001'}
+    )
+    assert resp.status == 400
+    assert await resp.json() == {
+        'error': 'Failed to send SMS',
+        'details': "no route for '15550000001'",
+    }
+    assert all(q.empty() for q in queues.values())
+    assert store.messages == {}
+
+
+@pytest.mark.asyncio
+async def test_health_sums_the_queues(http):
+    client, _, _ = http
+    for to in ('+306900000001', '+447000000001', '+447000000002'):
+        resp = await client.post(
+            '/api/v1/sms/send', json={**BODY, 'destination_addr': to}
+        )
+        assert resp.status == 200
+    assert (await (await client.get('/health')).json())['queue_size'] == 3

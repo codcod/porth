@@ -35,6 +35,9 @@ class SMSMessage:
     protocol: str  # 'http' | 'kannel'
     protocol_data: dict[str, tp.Any] = dataclasses.field(default_factory=dict)
 
+    # The SMSC it goes out through, set at submit (None: stored before routing)
+    smsc: tp.Optional[str] = None
+
     # Timing
     created_at: datetime = dataclasses.field(
         default_factory=lambda: datetime.now(timezone.utc)

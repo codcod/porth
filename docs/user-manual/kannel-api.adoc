@@ -21,6 +21,10 @@ comes from `kannel.default_sender`.
 | `dlr-url` | no | URL to fetch with the message's final outcome. See <<Delivery reports>>.
 | `dlr-mask` | no | Which outcomes fetch `dlr-url`: `1` delivered, `2` not delivered, or
 their sum. Without it, no callback is made.
+| `smsc` | no | The SMSC to send through, by its `[porth.smsc.<name>]` name, in place of the
+routing rules. Empty is the same as absent. Unlike Kannel, where it is a hint the routing
+rules can override, it always wins, and an SMSC that is not configured is an error. See
+<<Routing>>.
 | `username`, `password` | no | Accepted and ignored. The API has no authentication.
 |===
 
@@ -40,7 +44,15 @@ Message-ID: 3f1c…
 
 With several recipients there is one `Message-ID` line per message, in `to` order once
 dropped and repeated numbers are left out, so there can be fewer lines than numbers in `to`.
-The request is accepted or refused whole.
+A number that no SMSC takes (see <<Routing rules>>) is dropped too, as in Kannel. The request
+is otherwise accepted or refused whole.
+
+When not one number routes, including when `smsc` names an SMSC that is not configured,
+{product} answers as Kannel does, `403` with the `text/plain` body:
+
+----
+Not routable. Do not try again.
+----
 
 `200` means the messages were queued, not sent. A `to` with no valid number, a missing `text`,
 or a missing `from` with no `kannel.default_sender` returns `400` with
@@ -74,6 +86,7 @@ Kannel bits (4, 8, 16) are never produced yet (POR-005).
 | `%A` | The receipt text the SMSC sent.
 | `%t` | The receipt's arrival time in UTC, as `YYYY-MM-DD HH:MM`.
 | `%T` | The receipt's arrival time as a UNIX timestamp.
+| `%i` | The name of the SMSC the message went out through.
 | `%%` | A literal `%`.
 |===
 
@@ -118,6 +131,7 @@ Kannel 1.4.5 sends:
 | `%T` | The MO's arrival time as a UNIX timestamp.
 | `%c` | The text's coding: `0` (GSM text) or `2` (UCS-2).
 | `%C` | The text's charset: `UTF-8` or `UTF-16BE`.
+| `%i` | The name of the SMSC the MO arrived on.
 | `%%` | A literal `%`.
 |===
 
@@ -140,7 +154,8 @@ http://app.example/mo?from=%p&to=%P&text=%a&charset=%C
 {product} fetches the URL once with `GET`, with a 30 s timeout. If the application answers
 `200` or `202` with a `text/plain` body that is not empty once leading and trailing whitespace
 is stripped, and `mo.reply` is on (the default), the stripped body is sent back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
-any other message, with no delivery report. A reply longer than one SMS is sent whole as a
+any other message, with no delivery report. It goes out through the SMSC the MO arrived on,
+whatever the routing rules say. Kannel instead routes a reply like any other message. A reply longer than one SMS is sent whole as a
 concatenated SMS, where Kannel's default `max-messages = 1` sends only one.
 
 Any other answer sends nothing and is logged: another status, another content type, or an
