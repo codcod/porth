@@ -20,6 +20,8 @@ from porth.config.settings import (
 from porth.core.message import MessageStatus, SMSMessage
 from porth.main import SMSGateway
 
+CONFIG = pathlib.Path(__file__).resolve().parents[3] / 'config' / 'config.toml'
+
 
 @pytest.mark.asyncio
 async def test_failed_bind_leaves_runner_for_stop_to_clean_up(uow_factory):
@@ -187,7 +189,7 @@ def test_each_smsc_gets_its_own_throughput(uow_factory):
 def test_zero_throughput_fails_the_gateway(uow_factory):
     settings = two_smscs()
     settings.smsc['b'].throughput = 0
-    with pytest.raises(ValueError, match='throughput'):
+    with pytest.raises(ValueError, match='porth.smsc.b.throughput'):
         SMSGateway(settings, uow_factory)
 
 
@@ -208,7 +210,7 @@ def _config_check(path):
 
 
 def test_config_check_accepts_the_shipped_config():
-    assert _config_check('config/config.toml').returncode == 0
+    assert _config_check(CONFIG).returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -217,7 +219,11 @@ def test_config_check_accepts_the_shipped_config():
         ('[porth.routing.prefixes]\n"4a" = "local"\n', 'porth.routing.prefixes."4a"'),
         ('[porth.routing.prefixes]\n"30" = "nope"\n', 'porth.routing.prefixes."30"'),
         ('[porth.routing]\ndefault = "nope"\n', 'porth.routing.default'),
-        ('', 'throughput'),
+        (
+            '[porth.smsc.""]\nhost = "h"\nsystem_id = "s"\npassword = "p"\n',
+            'porth.smsc.""',
+        ),
+        ('', 'porth.smsc.local.throughput'),
     ],
 )
 def test_config_check_fails_as_startup_does(tmp_path, extra, key):
@@ -227,7 +233,7 @@ def test_config_check_fails_as_startup_does(tmp_path, extra, key):
     if not extra:
         smsc += 'throughput = 0\n'
     config = tmp_path / 'config.toml'
-    config.write_text(pathlib.Path('config/config.toml').read_text() + smsc + extra)
+    config.write_text(CONFIG.read_text() + smsc + extra)
     result = _config_check(config)
     assert result.returncode != 0
     assert key in result.stderr

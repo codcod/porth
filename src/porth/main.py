@@ -43,29 +43,27 @@ class SMSGateway:
             uow_factory = lambda: SqlAlchemyUnitOfWork(engine)  # noqa: E731
         self.uow_factory = uow_factory
         self.router = Router(settings.smsc, settings.routing)
-        # One engine (queue, workers, client) per SMSC, so a slow or down SMSC holds
-        # up only its own messages
-        self.engines = {
-            name: DeliveryEngine(MessageQueue(), uow_factory, settings)
-            for name in settings.smsc
-        }
-        self.queues = {name: e.message_queue for name, e in self.engines.items()}
+        self.queues = {name: MessageQueue() for name in settings.smsc}
         self.dlr_handler = DLRHandler(uow_factory)
         self.mo_handler = MOHandler(self.queues, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
-        # Built here, so a bad throughput fails before the store is read; started in
-        # start() before the workers, so a re-queued message finds its client
-        # instead of spending an attempt. The SMSC's name reaches receipts and MO
-        # through these callbacks.
+        # One engine (queue, workers, client) per SMSC, so a slow or down SMSC holds
+        # up only its own messages. Clients are built here, so a bad throughput fails
+        # before the store is read; started in start() before the workers, so a
+        # re-queued message finds its client instead of spending an attempt. The
+        # SMSC's name reaches receipts and MO through these callbacks.
+        self.engines: dict[str, DeliveryEngine] = {}
         for name, config in settings.smsc.items():
             smpp_client = SMPPClient(
+                name,
                 config,
                 on_receipt=functools.partial(self.dlr_handler.on_receipt, smsc=name),
                 on_mo=functools.partial(self.mo_handler.on_mo, smsc=name),
-                throughput=config.throughput,
             )
-            self.engines[name].smpp_client = smpp_client
+            self.engines[name] = DeliveryEngine(
+                name, smpp_client, self.queues[name], uow_factory, settings
+            )
             self.smpp_clients.append(smpp_client)
 
     async def start(self):
@@ -151,14 +149,16 @@ class SMSGateway:
             try:
                 await engine.stop()
             except Exception as e:
-                logging.error(f'Error stopping delivery engine: {e}')
+                logging.error(
+                    f'SMSC {engine.smsc}: Error stopping delivery engine: {e}'
+                )
 
         # Stop SMPP clients
         for client in self.smpp_clients:
             try:
                 await client.disconnect()
             except Exception as e:
-                logging.error(f'Error stopping SMPP client: {e}')
+                logging.error(f'SMSC {client.name}: Error stopping SMPP client: {e}')
 
         # After the clients, so no receipt or MO arrives for a closed session
         try:

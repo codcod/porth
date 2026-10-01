@@ -68,8 +68,8 @@ points at `make db-up`'s database. `make migrate` reads it from the same file.
 == SMSCs
 
 Each `[porth.smsc.<name>]` table is one SMSC {product} binds to, as a transceiver. The name
-is the table's key, such as `op-a` in `[porth.smsc.op-a]`. It appears in the logs, in the
-routing rules, in the Kannel `smsc` parameter and as `%i`.
+is the table's key, such as `op-a` in `[porth.smsc.op-a]`, and may not be empty. It appears
+in the logs, in the routing rules, in the Kannel `smsc` parameter and as `%i`.
 
 [cols="2,1,4",options="header"]
 |===
@@ -96,8 +96,9 @@ Each message goes out through one SMSC, chosen once when it is submitted:
 . else nothing, and the submit is refused. See <<Routing>>.
 
 A prefix is digits only, and quoted, as a TOML key: `"4470" = "op-b"`. The number is matched
-without one leading `+`, so `+447012…` and `447012…` both match `"4470"`. `00` is not
-rewritten: `00447012…` matches only a rule that starts with `00`.
+on its digits only: a `+`, dashes and spaces are dropped, so `+44-7012…`, `+447012…` and
+`447012…` all match `"4470"`. `00` is not rewritten: `00447012…` matches only a rule that
+starts with `00`.
 
 == Example
 

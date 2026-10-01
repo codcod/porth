@@ -41,7 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   counts once per part. Unset keeps today's unlimited rate (POR-014, POR-024, POR-020).
 - porth binds to several SMSCs, each a `[porth.smsc.<name>]` table, and routes each message
   once at submit: to the SMSC a Kannel client names with `smsc`, else the longest matching
-  destination prefix in `[porth.routing.prefixes]` (digits, matched without a leading `+`),
+  destination prefix in `[porth.routing.prefixes]` (matched on the number's digits only),
   else `routing.default`. Each SMSC has its own queue, workers and bind, so a slow or down
   SMSC holds up only its own messages. Receipts correlate by SMSC and id, an MO reply leaves
   through the SMSC the MO arrived on, and `%i` in `mo.url` and `dlr-url` is the SMSC's name
@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   message at once. Only `ESME_RTHROTTLED`, `ESME_RMSGQFUL`, `ESME_RX_T_APPN` and
   `ESME_RSYSERR` are retried, as in Kannel. A timeout, a dropped connection, a refused bind or
   `ESME_RINVBNDSTS` (the SMSC lost the session; porth rebinds) is still retried (POR-010).
+- A destination number is matched against routing prefixes on its digits only: `+`, dashes
+  and spaces are dropped, so `+30-694-1234567` routes like `306941234567`. Kannel matches the
+  number as written. Log lines about an SMSC's bind, inbound stream or delivery engine start
+  with `SMSC <name>:`, and its workers are named `<name>/worker-<n>` (POR-029).
 
 **Removed**
 
@@ -106,6 +110,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   are applied instead of dropped (POR-013).
 - `%%` in a Kannel `dlr-url` is a literal `%`, as in Kannel, so percent-encoded bytes can be
   kept intact as `%%C3%%A9` (POR-013).
+- An SMSC named `""` is refused at startup instead of being silently skipped by routing, and
+  a `throughput` below 1 names its key: `invalid porth.smsc.<name>.throughput` (POR-029).
 
 ## [0.1.0] - 2026-09-22
 
