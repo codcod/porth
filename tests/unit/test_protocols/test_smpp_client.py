@@ -68,7 +68,7 @@ def smpp(monkeypatch):
     # smpp.connect() builds its raw client from this name; the real Client wraps it
     monkeypatch.setattr(smpp_highlevel, 'SMPPClient', FakeSmppai)
     config = SMPPClientConfig(host='h', port=1, system_id='s', password='p')
-    return SMPPClient(config)
+    return SMPPClient('s', config)
 
 
 def msg(text: str, dlr: bool = True) -> SMSMessage:
@@ -161,11 +161,12 @@ async def test_failed_submit_drops_bind_and_next_send_rebinds(smpp):
 
 
 @pytest.mark.asyncio
-async def test_failed_connect_raises_and_next_send_retries(smpp):
+async def test_failed_connect_raises_and_next_send_retries(smpp, caplog):
     FakeSmppai.fail_connect = True
     with pytest.raises(ConnectionError):
         await smpp.send_message(msg('hi'))
     assert smpp.connected is False
+    assert 'SMSC s: Failed to connect' in caplog.text
 
     FakeSmppai.fail_connect = False
     await smpp.send_message(msg('hi'))
@@ -488,6 +489,9 @@ async def test_failed_connect_takes_no_turn(smpp):
 
 
 def test_throughput_below_one_fails_and_unset_builds_no_pacer(smpp):
-    with pytest.raises(ValueError, match='at least 1'):
-        SMPPClient(smpp.config, throughput=0)
+    config = SMPPClientConfig(
+        host='h', port=1, system_id='s', password='p', throughput=0
+    )
+    with pytest.raises(ValueError, match='porth.smsc.s.throughput'):
+        SMPPClient('s', config)
     assert smpp._pacer is None

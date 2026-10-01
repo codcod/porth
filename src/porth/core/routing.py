@@ -11,6 +11,8 @@ class Router:
     """A requested SMSC, else the longest matching destination prefix, else the default."""
 
     def __init__(self, names: tp.Collection[str], config: RoutingConfig):
+        if '' in names:
+            raise ValueError('invalid porth.smsc."": an SMSC needs a name')
         for prefix, name in config.prefixes.items():
             key = f'porth.routing.prefixes."{prefix}"'
             if not re.fullmatch('[0-9]+', prefix):
@@ -30,8 +32,8 @@ class Router:
             if smsc not in self.names:
                 raise NoRoute(f'no SMSC named {smsc!r}')
             return smsc
-        # One leading + dropped; 00 is not rewritten (design.md 1.31)
-        digits = number.removeprefix('+')
+        # Digits only (+, -, spaces dropped); 00 is not rewritten (design.md 1.37)
+        digits = re.sub('[^0-9]', '', number)
         for i in range(len(digits), 0, -1):
             if name := self.config.prefixes.get(digits[:i]):
                 return name

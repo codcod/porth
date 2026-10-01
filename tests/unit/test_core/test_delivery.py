@@ -35,8 +35,9 @@ class Engine(DeliveryEngine):
 
 def make(handler=None, settings=None, uow_factory=None):
     uow_factory = uow_factory or FakeUowFactory()
-    engine = Engine(MessageQueue(), uow_factory, settings or Settings())  # 3 retries
-    engine.smpp_client = handler
+    engine = Engine(
+        'a', handler, MessageQueue(), uow_factory, settings or Settings()
+    )  # 3 retries
     message = SMSMessage(
         source_addr='A',
         destination_addr='B',
@@ -134,14 +135,13 @@ async def test_message_error_fails_without_retry():
 
 
 @pytest.mark.asyncio
-async def test_no_client_goes_through_retry():
-    engine, message = make(None)
-    await engine._process_message(message)
-    assert message.retry_count == 1
-    assert message.status == MessageStatus.QUEUED
-    assert len(engine._retries) == 1
-    stored = engine.stored(message)
-    assert (stored.status, stored.retry_count) == (MessageStatus.QUEUED, 1)
+async def test_start_and_stop_name_the_smsc(caplog):
+    caplog.set_level('INFO')
+    engine, _ = make(FakeHandler())
+    await engine.start()
+    await engine.stop()
+    assert 'SMSC a: Delivery engine started' in caplog.text
+    assert 'SMSC a: Delivery engine stopped' in caplog.text
 
 
 def test_retry_delay_backs_off_to_the_cap():

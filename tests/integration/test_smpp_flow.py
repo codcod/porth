@@ -48,11 +48,11 @@ async def test_smpp_message_flow(uow_factory):
 
     server.on_message_received = on_message_received
 
-    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
-        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
+        'a',
+        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
     )
-    engine.smpp_client = porth_client
+    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
     message = SMSMessage(
         source_addr='1234',
         destination_addr='5678',
@@ -89,11 +89,11 @@ async def test_long_message_goes_out_in_parts(uow_factory):
 
     server.on_message_received = on_message_received
 
-    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
-        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw')
+        'a',
+        SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
     )
-    engine.smpp_client = porth_client
+    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
     message = SMSMessage(
         source_addr='1234',
         destination_addr='5678',
@@ -133,12 +133,12 @@ async def send_and_receipt(message: SMSMessage) -> SMSMessage:
     server.on_message_received = lambda server, session, pdu: 'smsc-1'
 
     handler = DLRHandler(uow_factory)
-    engine = DeliveryEngine(MessageQueue(), uow_factory, Settings())
     porth_client = SMPPClient(
+        'a',
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_receipt=functools.partial(handler.on_receipt, smsc='a'),
     )
-    engine.smpp_client = porth_client
+    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
     message.smsc = 'a'
     await store.add(message)
 
@@ -232,12 +232,12 @@ async def test_mo_reaches_the_application_and_its_reply_goes_back(uow_factory):
         uow_factory,
         MOConfig(url=str(app_server.make_url('/mo')) + '?k=%k&p=%p'),
     )
-    engine = DeliveryEngine(queue, uow_factory, Settings())
     porth_client = SMPPClient(
+        'a',
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_mo=functools.partial(handler.on_mo, smsc='a'),
     )
-    engine.smpp_client = porth_client
+    engine = DeliveryEngine('a', porth_client, queue, uow_factory, Settings())
 
     await server.start()
     await handler.start()

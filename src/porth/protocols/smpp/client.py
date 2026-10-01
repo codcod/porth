@@ -73,13 +73,17 @@ class SMPPClient:
 
     def __init__(
         self,
+        name: str,
         config: SMPPClientConfig,
         on_receipt: tp.Optional[tp.Callable[[Message], tp.Awaitable[None]]] = None,
         on_mo: tp.Optional[tp.Callable[[Message], None]] = None,
-        throughput: tp.Optional[int] = None,
     ):
+        throughput = config.throughput
         if throughput is not None and throughput < 1:
-            raise ValueError('throughput must be at least 1')
+            raise ValueError(
+                f'invalid porth.smsc.{name}.throughput: must be at least 1'
+            )
+        self.name = name
         self.config = config
         self._pacer = Pacer(throughput) if throughput is not None else None
         self.on_receipt = on_receipt
@@ -119,14 +123,15 @@ class SMPPClient:
                 )
             # BaseException incl. CancelledError: log it, smppai has closed the bind.
             except BaseException as e:
-                logger.error(f'Failed to connect SMPP client: {e!r}')
+                logger.error(f'SMSC {self.name}: Failed to connect SMPP client: {e!r}')
                 raise
 
             self._bind = stack
             self.client = inbound.raw
             self._inbound = asyncio.create_task(self._consume(inbound))
             logger.info(
-                f'SMPP client connected to {self.config.host}:{self.config.port}'
+                f'SMSC {self.name}: SMPP client connected to '
+                f'{self.config.host}:{self.config.port}'
             )
             return inbound.raw
 
@@ -150,7 +155,7 @@ class SMPPClient:
                 await self._keeper
             self._keeper = None
         await self._drop()
-        logger.info('SMPP client disconnected')
+        logger.info(f'SMSC {self.name}: SMPP client disconnected')
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
@@ -187,7 +192,7 @@ class SMPPClient:
                 dest_addr_npi=destination.npi,
             )
         except Exception as e:
-            logger.error(f'Failed to send message via SMPP: {e}')
+            logger.error(f'SMSC {self.name}: Failed to send message via SMPP: {e}')
             # The whole message is retried; parts the SMSC already accepted are orphans
             sent = getattr(e, 'sent_message_ids', [])
             if sent:
@@ -229,16 +234,18 @@ class SMPPClient:
                     else ('MO', self.on_mo)
                 )
                 if handler is None:
-                    logger.info(f'Inbound {kind} from {msg.sender} dropped')
+                    logger.info(
+                        f'SMSC {self.name}: Inbound {kind} from {msg.sender} dropped'
+                    )
                     continue
                 try:
                     result = handler(msg)
                     if result is not None:  # on_receipt's: the receipt is stored
                         await result
                 except Exception:
-                    logger.exception(f'Error handling {kind}')
+                    logger.exception(f'SMSC {self.name}: Error handling {kind}')
         except Exception as e:
-            logger.warning(f'SMPP inbound stream ended: {e!r}')
+            logger.warning(f'SMSC {self.name}: SMPP inbound stream ended: {e!r}')
 
     async def _drop(self) -> None:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
@@ -248,7 +255,7 @@ class SMPPClient:
             try:
                 await stack.aclose()
             except Exception as e:
-                logger.error(f'Error disconnecting SMPP client: {e}')
+                logger.error(f'SMSC {self.name}: Error disconnecting SMPP client: {e}')
         if consumer is not None:
             # shield: a cancelled caller (disconnect() stopping the rebind loop)
             # must not cancel the drain; the consumer ends on smppai's end marker.

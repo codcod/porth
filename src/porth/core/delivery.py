@@ -9,7 +9,7 @@ from smpp import CommandStatus
 from smpp.exceptions import SMPPMessageException
 
 from porth.config.settings import DeliveryConfig, Settings
-from porth.core.exceptions import DeliveryError, MessageError
+from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
@@ -47,6 +47,8 @@ class DeliveryEngine:
 
     def __init__(
         self,
+        smsc: str,
+        smpp_client: 'SMPPClient',
         message_queue: MessageQueue,
         uow_factory: tp.Callable[[], AbstractUnitOfWork],
         settings: Settings,
@@ -54,10 +56,11 @@ class DeliveryEngine:
         self.message_queue = message_queue
         self.uow_factory = uow_factory
         self.settings = settings
+        self.smsc = smsc
+        self.smpp_client = smpp_client
         self.workers: list[asyncio.Task] = []
         self.running = False
         self._retries: set[asyncio.Task] = set()
-        self.smpp_client: tp.Optional['SMPPClient'] = None
 
     async def start(self) -> None:
         """Start the delivery engine workers."""
@@ -68,11 +71,14 @@ class DeliveryEngine:
 
         # Start delivery workers
         for i in range(self.settings.delivery.worker_count):
-            worker = asyncio.create_task(self._delivery_worker(f'worker-{i}'))
+            worker = asyncio.create_task(
+                self._delivery_worker(f'{self.smsc}/worker-{i}')
+            )
             self.workers.append(worker)
 
         logger.info(
-            f'Delivery engine started with {self.settings.delivery.worker_count} workers'
+            f'SMSC {self.smsc}: Delivery engine started with '
+            f'{self.settings.delivery.worker_count} workers'
         )
 
     async def stop(self) -> None:
@@ -92,7 +98,7 @@ class DeliveryEngine:
         await asyncio.gather(*tasks, return_exceptions=True)
         self.workers.clear()
 
-        logger.info('Delivery engine stopped')
+        logger.info(f'SMSC {self.smsc}: Delivery engine stopped')
 
     async def _delivery_worker(self, worker_name: str) -> None:
         """Delivery worker that processes messages from the queue."""
@@ -129,9 +135,6 @@ class DeliveryEngine:
         try:
             logger.info(f'Processing message {message.message_id}')
 
-            if self.smpp_client is None:
-                raise DeliveryError('no SMPP client configured')
-
             result = await self.smpp_client.send_message(message)
 
         except MessageError as e:
@@ -161,15 +164,13 @@ class DeliveryEngine:
         message.sent_at = datetime.now(timezone.utc)
         ids = result['smsc_message_ids']
         message.protocol_data['smsc_message_ids'] = ids
-        smsc = message.smsc
-        assert smsc is not None  # set at submit, or by recovery
         # Outside the send's try: the SMSC has the message, so a failed write must
         # never resend it now. Retried, since left `queued` a restart would resend it.
         for wait in (*_SENT_WRITE_WAITS, None):
             try:
                 async with self.uow_factory() as uow:
                     await uow.messages.update(message)
-                    await uow.messages.add_smsc_ids(message.message_id, smsc, ids)
+                    await uow.messages.add_smsc_ids(message.message_id, self.smsc, ids)
                     await uow.commit()
                 break
             except Exception:
@@ -184,7 +185,7 @@ class DeliveryEngine:
                     f'retrying in {wait}s'
                 )
                 await asyncio.sleep(wait)
-        logger.info(f'Message {message.message_id} sent through SMSC {smsc}')
+        logger.info(f'Message {message.message_id} sent through SMSC {self.smsc}')
 
     async def _save(self, message: SMSMessage) -> None:
         """Write the message's status and retry count; log a failed write."""

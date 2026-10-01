@@ -21,7 +21,9 @@ R = router(**{'44': 'uk', '4470': 'uk-mobile', '00': 'intl'})
     [
         ('447012345678', 'uk-mobile'),  # the longest match wins
         ('441234567890', 'uk'),
-        ('+447012345678', 'uk-mobile'),  # one leading + is dropped
+        ('+447012345678', 'uk-mobile'),  # matched on digits only
+        ('+44-70-1234-5678', 'uk-mobile'),
+        ('44 70 12345678', 'uk-mobile'),
         ('00447012345678', 'intl'),  # 00 is not rewritten
     ],
 )
@@ -60,3 +62,8 @@ def test_unknown_smsc_is_no_route():
 def test_bad_rules_raise_naming_the_key(config, key):
     with pytest.raises(ValueError, match=f'invalid {key}'):
         Router(NAMES, config)
+
+
+def test_empty_smsc_name_is_rejected():
+    with pytest.raises(ValueError, match='porth.smsc.""'):
+        Router(('', 'uk'), RoutingConfig())
