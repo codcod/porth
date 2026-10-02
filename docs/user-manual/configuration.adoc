@@ -59,6 +59,10 @@ have ten each.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 | `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.
+| `store.dlr_timeout_hours` | `48` | Hours a `sent` message waits for its delivery receipt
+before it becomes `expired`. At least `1`. See <<Lifecycle>>.
+| `store.retention_days` | `7` | Days after it was accepted that a finished message is
+deleted (later while a status call is still being made). At least `1`. See <<Lifecycle>>.
 | `db` | unset | **Required.** The PostgreSQL DSN, in SQLAlchemy's asyncpg form:
 `postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`. The shipped `config/config.toml`
 points at `make db-up`'s database. `make migrate` reads it from the same file.
@@ -145,6 +149,10 @@ worker_count = 10
 [porth.mo]
 url = "http://app.example/mo?from=%p&text=%a&charset=%C"
 reply = true
+
+[porth.store]
+dlr_timeout_hours = 48
+retention_days = 7
 ----
 
 To migrate a database other than the one in `config/config.toml`, name the file:

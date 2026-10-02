@@ -67,9 +67,9 @@ status, so the client need not poll. The body is JSON:
 | `occurred_at` | When {product} set the final status, in UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`.
 |===
 
-* Every final status is reported, whatever set it: a delivery receipt, or a send {product}
-  gave up on (the SMSC rejected it, or every retry failed), at startup too. See
-  <<Message delivery>>.
+* Every final status is reported, whatever set it: a delivery receipt, a send {product}
+  gave up on (the SMSC rejected it, or every retry failed), at startup too, or no receipt
+  within `store.dlr_timeout_hours` (`expired`). See <<Message delivery>>.
 * The URL has no escape codes, unlike a Kannel `dlr-url`: {product} adds nothing to it. The
   HTTP client may normalise its percent-encoding (`%41` is sent as `A`, a stray `%` as `%25`),
   which servers read the same way.
@@ -101,13 +101,15 @@ status, so the client need not poll. The body is JSON:
 |===
 
 Timestamps are UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`. An unknown id returns `404` with
-`{"error": "Message not found", "details": <message_id>}`.
+`{"error": "Message not found", "details": <message_id>}`. So does a finished message once
+`store.retention_days` have passed since it was accepted (later while a status call is still
+being made), because it has been deleted (see <<Lifecycle>>).
 
 Messages sent through the Kannel-compatible API can be polled here too, by the `Message-ID`
 that `sendsms` returned.
 
-{product} keeps message records in PostgreSQL, so a status survives a restart. Records are
-not yet evicted. See <<Limitations>>.
+{product} keeps message records in PostgreSQL, so a status survives a restart, until the
+retention window deletes the record (see <<Lifecycle>>).
 
 == Health
 

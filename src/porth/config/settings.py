@@ -57,6 +57,12 @@ class MOConfig:
 
 
 @dataclasses.dataclass(kw_only=True)
+class StoreConfig:
+    dlr_timeout_hours: int = 48  # a sent message with no receipt by then: expired
+    retention_days: int = 7  # a finished message is deleted this long after creation
+
+
+@dataclasses.dataclass(kw_only=True)
 class Settings:
     http: HTTPConfig = dataclasses.field(default_factory=HTTPConfig)
     kannel: KannelConfig = dataclasses.field(default_factory=KannelConfig)
@@ -65,6 +71,7 @@ class Settings:
     routing: RoutingConfig = dataclasses.field(default_factory=RoutingConfig)
     delivery: DeliveryConfig = dataclasses.field(default_factory=DeliveryConfig)
     mo: MOConfig = dataclasses.field(default_factory=MOConfig)
+    store: StoreConfig = dataclasses.field(default_factory=StoreConfig)
 
     # PostgreSQL DSN (postgresql+asyncpg://...); required to start the gateway
     db: tp.Optional[str] = None
@@ -75,8 +82,8 @@ class Settings:
 def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settings:
     """
     Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
-    An unknown key, a wrong type, a missing required key or an unknown log_level
-    raises ValueError naming the key.
+    An unknown key, a wrong type, a missing required key, an unknown log_level or a
+    store window below 1 raises ValueError naming the key.
     """
     data = monobase.config.read_config(os.fspath(path))
     if not isinstance(data.get('porth'), dict):
@@ -84,6 +91,9 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     settings = _build(Settings, data['porth'], 'porth')
     if settings.log_level not in logging.getLevelNamesMapping():
         raise ValueError(f'invalid porth.log_level: {settings.log_level!r}')
+    for f in dataclasses.fields(StoreConfig):
+        if getattr(settings.store, f.name) < 1:
+            raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')
     return settings
 
 

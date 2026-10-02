@@ -21,6 +21,7 @@ from porth.core.message import MessageStatus, SMSMessage
 from porth.core.mo import MOHandler
 from porth.core.queue import MessageQueue
 from porth.core.routing import Router
+from porth.core.sweep import Sweeper
 from porth.protocols.http.api import create_http_app
 from porth.protocols.kannel.api import create_kannel_app
 from porth.protocols.smpp.client import SMPPClient
@@ -46,6 +47,7 @@ class SMSGateway:
         self.router = Router(settings.smsc, settings.routing)
         self.queues = {name: MessageQueue() for name in settings.smsc}
         self.dlr_handler = DLRHandler(uow_factory)
+        self.sweeper = Sweeper(uow_factory, self.dlr_handler, settings.store)
         self.mo_handler = MOHandler(self.queues, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
@@ -95,6 +97,8 @@ class SMSGateway:
         # already be handled
         await self.dlr_handler.start()
         await self.dlr_handler.resume()
+        # After recovery and resume(), so its first pass sees every recovered message
+        self.sweeper.start()
         await self.mo_handler.start()
 
         # Start the HTTP API and the Kannel-compatible API, each on its own listener
@@ -172,6 +176,8 @@ class SMSGateway:
             except Exception as e:
                 logging.error(f'SMSC {client.name}: Error stopping SMPP client: {e}')
 
+        # Before the DLR handler, whose session dispatches the sweep's calls
+        await self.sweeper.stop()
         # After the clients, so no receipt or MO arrives for a closed session
         try:
             await self.dlr_handler.stop()

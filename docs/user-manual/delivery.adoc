@@ -21,8 +21,22 @@
 
 . A delivery receipt from the SMSC then moves a `sent` message to `delivered`, `failed` or
   `expired`. See <<Delivery receipts>>.
+. A `sent` message with no final receipt `store.dlr_timeout_hours` (48) after it was sent
+  becomes `expired`. A REST message with a `callback_url` gets that status posted (see
+  <<Status callback>>). A Kannel message's `dlr-url` is not fetched, since Kannel fetches it
+  only for a receipt. A receipt that arrives later is ignored.
 
-A message becomes `delivered`, or `expired`, only from a delivery receipt.
+A message becomes `delivered` only from a delivery receipt.
+
+{product} checks for timed-out messages and old records once a minute, so a timeout or a
+deletion can land up to a minute late.
+
+A finished message is deleted `store.retention_days` (7) after it was accepted, together with
+its receipt correlation. One whose status callback or `dlr-url` call is still being made is
+deleted on a later check, once that call succeeds or is given up. A finished message is one
+that is `delivered`, `failed` or `expired`, or an MO reply, which is `sent` with no receipt
+requested. A `queued` message, and a `sent` one still waiting for its receipt, is never
+deleted. Polling a deleted message answers `404`.
 
 == Routing
 

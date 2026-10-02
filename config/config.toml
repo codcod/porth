@@ -26,6 +26,12 @@ worker_count = 10  # per SMSC
 # url = "http://localhost:8000/mo?from=%p&to=%P&text=%a&coding=%C"
 reply = true
 
+# Message records: a sent message with no delivery receipt after dlr_timeout_hours
+# becomes expired; a finished one is deleted retention_days after it was created.
+# [porth.store]
+# dlr_timeout_hours = 48
+# retention_days = 7
+
 # SMSCs, one table each, named by the table's key; without any, porth accepts no
 # message (nothing routes). compose's smppai SMSC accepts any system_id/password
 # (publish its port 2775 to bind from the host).

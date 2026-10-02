@@ -21,6 +21,7 @@ def test_minimal_table_gives_defaults(tmp_path):
     assert (settings.routing.default, settings.routing.prefixes) == (None, {})
     assert settings.delivery.max_retries == 3
     assert settings.mo.reply is True
+    assert (settings.store.dlr_timeout_hours, settings.store.retention_days) == (48, 7)
     assert (settings.db, settings.log_level) == (None, 'INFO')
 
 
@@ -62,6 +63,9 @@ worker_count = 4
 [porth.mo]
 url = "http://app/mo?from=%p"
 reply = false
+[porth.store]
+dlr_timeout_hours = 24
+retention_days = 30
 [traffic]
 ignored = true
 """,
@@ -86,6 +90,7 @@ ignored = true
     assert (d.max_retries, d.retry_delay, d.backoff_factor) == (1, 2, 1)
     assert (d.max_retry_delay, d.worker_count) == (60, 4)
     assert (settings.mo.url, settings.mo.reply) == ('http://app/mo?from=%p', False)
+    assert (settings.store.dlr_timeout_hours, settings.store.retention_days) == (24, 30)
 
 
 def test_host_only_kannel_keeps_kannel_default_port(tmp_path):
@@ -99,6 +104,7 @@ def test_host_only_kannel_keeps_kannel_default_port(tmp_path):
         ('[porth]\ndebug = true\n', 'porth.debug'),
         ('[porth.smpp.client]\nhost = "h"\n', 'porth.smpp'),
         ('[porth.delivery]\nthroughput = 50\n', 'porth.delivery.throughput'),
+        ('[porth.store]\nretention = 7\n', 'porth.store.retention'),
         (
             '[porth.smsc.a]\nhost = "h"\nsystem_id = "p"\npassword = "s"\nx = 1\n',
             'porth.smsc.a.x',
@@ -147,6 +153,14 @@ def test_no_porth_table_raises(tmp_path):
 def test_unknown_log_level_raises(tmp_path):
     with pytest.raises(ValueError, match='porth.log_level'):
         load(tmp_path, '[porth]\nlog_level = "LOUD"\n')
+
+
+@pytest.mark.parametrize('key', ['dlr_timeout_hours', 'retention_days'])
+def test_store_window_below_one_raises(tmp_path, key):
+    with pytest.raises(
+        ValueError, match=f'invalid porth.store.{key}: must be at least 1'
+    ):
+        load(tmp_path, f'[porth.store]\n{key} = 0\n')
 
 
 def test_shipped_config_loads():

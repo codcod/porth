@@ -2,6 +2,7 @@
 
 import copy
 import typing as tp
+from datetime import datetime
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -52,6 +53,41 @@ class FakeMessageRepository(AbstractMessageRepository):
         unsent = (MessageStatus.PENDING, MessageStatus.QUEUED)
         found = [m for m in self.messages.values() if m.status in unsent]
         return copy.deepcopy(sorted(found, key=lambda m: m.created_at))
+
+    @tp.override
+    async def unreceipted(self, cutoff: datetime, limit: int) -> list[SMSMessage]:
+        found = [
+            m
+            for m in self.messages.values()
+            if m.status == MessageStatus.SENT
+            and m.dlr_requested
+            and m.sent_at is not None
+            and m.sent_at < cutoff
+        ]
+        return copy.deepcopy(sorted(found, key=lambda m: m.sent_at)[:limit])
+
+    @tp.override
+    async def evict(self, cutoff: datetime, limit: int) -> int:
+        finished = (
+            MessageStatus.DELIVERED,
+            MessageStatus.FAILED,
+            MessageStatus.EXPIRED,
+        )
+        doomed = [
+            id
+            for id, m in self.messages.items()
+            if m.created_at < cutoff
+            and id not in self.dlr_callbacks
+            and (
+                m.status in finished
+                or (m.status == MessageStatus.SENT and not m.dlr_requested)
+            )
+        ][:limit]
+        for id in doomed:
+            del self.messages[id]
+        for key in [k for k, v in self.smsc_ids.items() if v in doomed]:
+            del self.smsc_ids[key]
+        return len(doomed)
 
     @tp.override
     async def add_callback(

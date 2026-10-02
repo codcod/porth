@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `{"message_id", "status", "occurred_at"}`. A non-2xx answer, a redirect included, is retried
   up to 8 attempts over about 4 minutes, and a call cut short by a restart is made again at
   the next start. The Kannel `dlr-url` keeps its 3 attempts (POR-026).
+- A `sent` message with no final receipt `store.dlr_timeout_hours` (default 48) after it was
+  sent becomes `expired`, and its `callback_url` gets that status; a Kannel `dlr-url` is not
+  fetched for it. A finished message (`delivered`, `failed`, `expired`, or an MO reply) is
+  deleted `store.retention_days` (default 7) after it was accepted, once any status call it
+  is owed has been made, and its status poll then answers `404`. Both are checked once a
+  minute (POR-003).
 
 **Changed**
 
