@@ -25,6 +25,7 @@ messages = sa.Table(
     sa.Column('dlr_url', sa.Text(), nullable=True),
     sa.Column('smsc', sa.Text(), nullable=True),  # null: stored before routing
     sa.Column('priority', sa.Text(), nullable=False, server_default='normal'),
+    sa.Column('callback_url', sa.Text(), nullable=True),
     sa.CheckConstraint(
         "status IN ('pending','queued','sent','delivered','failed','expired')",
         name='messages_status_check',
@@ -47,7 +48,8 @@ smsc_ids = sa.Table(
     ),
 )
 
-# A dlr-url call not yet made (expanded URL); at most one per message
+# A final-status call not yet made, at most one per message: a Kannel dlr-url GET
+# (expanded URL, null body) or a REST status callback POST of body
 dlr_callbacks = sa.Table(
     'dlr_callbacks',
     metadata,
@@ -58,4 +60,5 @@ dlr_callbacks = sa.Table(
         primary_key=True,
     ),
     sa.Column('url', sa.Text(), nullable=False),
+    sa.Column('body', JSONB(), nullable=True),
 )

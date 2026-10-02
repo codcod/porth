@@ -9,6 +9,7 @@ from smpp import CommandStatus
 from smpp.exceptions import SMPPMessageException
 
 from porth.config.settings import DeliveryConfig, Settings
+from porth.core.dlr import DLRHandler
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
@@ -52,7 +53,9 @@ class DeliveryEngine:
         message_queue: MessageQueue,
         uow_factory: tp.Callable[[], AbstractUnitOfWork],
         settings: Settings,
+        dlr_handler: DLRHandler,
     ):
+        self.dlr_handler = dlr_handler
         self.message_queue = message_queue
         self.uow_factory = uow_factory
         self.settings = settings
@@ -140,7 +143,7 @@ class DeliveryEngine:
         except MessageError as e:
             logger.error(f'Message {message.message_id} rejected permanently: {e}')
             message.status = MessageStatus.FAILED
-            await self._save(message)
+            await self._finalize(message)
             return
 
         except Exception as e:
@@ -154,7 +157,7 @@ class DeliveryEngine:
                     f'({_status_name(e.command_status)}), not retried'
                 )
                 message.status = MessageStatus.FAILED
-                await self._save(message)
+                await self._finalize(message)
                 return
             logger.error(f'Failed to deliver message {message.message_id}: {e}')
             await self._handle_delivery_failure(message, str(e))
@@ -188,16 +191,33 @@ class DeliveryEngine:
         logger.info(f'Message {message.message_id} sent through SMSC {self.smsc}')
 
     async def _save(self, message: SMSMessage) -> None:
-        """Write the message's status and retry count; log a failed write."""
+        """Write the message's (non-final) status and retry count; log a failed write."""
         try:
             async with self.uow_factory() as uow:
                 await uow.messages.update(message)
                 await uow.commit()
         except Exception:
-            logger.exception(
-                f'Message {message.message_id}: {message.status.value} '
-                f'(attempt {message.retry_count}) not saved'
-            )
+            self._not_saved(message)
+
+    async def _finalize(self, message: SMSMessage) -> None:
+        """Write the message's final status and the call it is due, then make the call."""
+        try:
+            async with self.uow_factory() as uow:
+                call = await self.dlr_handler.finalize(
+                    uow, message, datetime.now(timezone.utc)
+                )
+                await uow.commit()
+        except Exception:
+            self._not_saved(message)
+            return
+        self.dlr_handler.dispatch(call)
+
+    @staticmethod
+    def _not_saved(message: SMSMessage) -> None:
+        logger.exception(
+            f'Message {message.message_id}: {message.status.value} '
+            f'(attempt {message.retry_count}) not saved'
+        )
 
     async def _handle_delivery_failure(self, message: SMSMessage, error: str) -> None:
         """Handle delivery failure and retry logic."""
@@ -205,7 +225,9 @@ class DeliveryEngine:
         config = self.settings.delivery
         if message.retry_count >= config.max_retries:
             message.status = MessageStatus.FAILED
-        await self._save(message)
+            await self._finalize(message)
+        else:
+            await self._save(message)
 
         if message.retry_count < config.max_retries:
             delay = retry_delay(message.retry_count, config)

@@ -124,7 +124,9 @@ message on as follows:
 |===
 
 `delivered_at` is the time the last part's receipt arrived, in UTC. HTTP API clients see
-the new status on their next poll. For a Kannel `dlr-url` callback, see <<Delivery reports>>.
+the new status on their next poll. A message submitted with a `callback_url` also gets its
+final status posted there, whatever set it (see <<Status callback>>). For a Kannel `dlr-url`
+callback, see <<Delivery reports>>.
 
 * A receipt is matched by the SMSC it arrived from and the exact SMSC message id, so two
   SMSCs that issue the same id never mix up their messages. A receipt whose id {product} does not

@@ -12,7 +12,7 @@ The minimum viable product covers:
 * Delivery to one upstream SMSC over a single SMPP transceiver bind.
 * An in-process queue with retries on delivery failure.
 * Delivery receipts (DLRs) correlated back to the submitting client: a status the HTTP client
-  polls, or a callback to a Kannel client's `dlr-url`.
+  polls or has posted to its `callback_url`, or a callback to a Kannel client's `dlr-url`.
 * Unicode (UCS-2) and concatenated (multi-part) SMS.
 * Mobile-originated (MO) SMS forwarded to an application URL, as Kannel's `get-url`, with a
   plain-text reply sent back to the subscriber.
@@ -51,6 +51,7 @@ flowchart TB
         SMPP_Client["SMPP client (one bind to the SMSC)"]
     end
     KannelTarget["Kannel client's dlr-url"]
+    RestTarget["HTTP client's callback_url"]
     Application["Application MO URL"]
     HTTP_API -->|submit| Queue
     Kannel_API -->|submit| Queue
@@ -60,6 +61,7 @@ flowchart TB
     SMPP_Client -->|deliver_sm receipt| DLR
     DLR -->|status| Store
     DLR -->|GET| KannelTarget
+    DLR -->|POST| RestTarget
     SMPP_Client -->|deliver_sm MO| MO
     MO -->|GET| Application
     MO -->|reply| Queue

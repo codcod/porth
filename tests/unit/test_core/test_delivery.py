@@ -10,6 +10,7 @@ from smpp.exceptions import SMPPBindException, SMPPMessageException
 from porth.config.settings import DeliveryConfig, Settings
 from porth.core import delivery as delivery_module
 from porth.core.delivery import DeliveryEngine, retry_delay
+from porth.core.dlr import DLRHandler
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
@@ -33,18 +34,23 @@ class Engine(DeliveryEngine):
         return self.uow_factory.repo.messages[message.message_id]
 
 
-def make(handler=None, settings=None, uow_factory=None):
+def make(handler=None, settings=None, uow_factory=None, **fields):
     uow_factory = uow_factory or FakeUowFactory()
     engine = Engine(
-        'a', handler, MessageQueue(), uow_factory, settings or Settings()
-    )  # 3 retries
+        'a',
+        handler,
+        MessageQueue(),
+        uow_factory,
+        settings or Settings(),  # 3 retries
+        DLRHandler(uow_factory),
+    )
     message = SMSMessage(
         source_addr='A',
         destination_addr='B',
         message_text='hi',
-        protocol='http',
         status=MessageStatus.QUEUED,  # as taken off the queue
         smsc='a',
+        **{'protocol': 'http', **fields},
     )
     uow_factory.repo.messages[message.message_id] = copy.deepcopy(message)
     return engine, message
@@ -217,3 +223,46 @@ async def test_stop_cancels_pending_retry():
     await engine.stop()
     assert task.cancelled()
     assert engine.message_queue.empty()
+
+
+def dispatched(engine, monkeypatch) -> list:
+    """Record the calls the engine dispatches instead of making them."""
+    calls: list = []
+    monkeypatch.setattr(engine.dlr_handler, 'dispatch', calls.append)
+    return calls
+
+
+PERMANENT = SMPPMessageException('x', command_status=CommandStatus.ESME_RINVDESTADR)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'error, retry_count',
+    [(PERMANENT, 0), (MessageError('bad'), 0), (OSError('reset'), 2)],
+    ids=['permanent', 'message-error', 'last-attempt'],
+)
+async def test_engine_failed_stores_the_rest_callback(monkeypatch, error, retry_count):
+    engine, message = make(FakeHandler(error), callback_url='http://m/cb')
+    message.retry_count = retry_count
+    calls = dispatched(engine, monkeypatch)
+    await engine._process_message(message)
+    ((message_id, (url, body)),) = engine.uow_factory.repo.dlr_callbacks.items()
+    assert (message_id, url) == (message.message_id, 'http://m/cb')
+    assert body['status'] == 'failed' and body['message_id'] == message.message_id
+    assert calls == [(message_id, url, body)]
+    assert engine.uow_factory.uows[-1].committed
+
+
+@pytest.mark.asyncio
+async def test_engine_failed_sends_no_kannel_dlr_url(monkeypatch):
+    engine, message = make(
+        FakeHandler(PERMANENT),
+        protocol='kannel',
+        dlr_url='http://k/dlr?d=%d',
+        protocol_data={'dlr_mask': 31},
+    )
+    calls = dispatched(engine, monkeypatch)
+    await engine._process_message(message)
+    assert engine.stored(message).status == MessageStatus.FAILED
+    assert engine.uow_factory.repo.dlr_callbacks == {}
+    assert calls == [None]

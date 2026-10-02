@@ -1,6 +1,7 @@
 """Unit tests for the DLR handler (receipt correlation and Kannel dlr-url callbacks)."""
 
 import asyncio
+import re
 import types
 
 import pytest
@@ -20,7 +21,7 @@ def receipt(smsc_id, state, text='id:x stat:DELIVRD'):
     )
 
 
-def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0):
+def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0, callback_url=None):
     """A sent message in the repository; returns a reader of its stored row."""
     message = SMSMessage(
         source_addr='A',
@@ -28,6 +29,7 @@ def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0):
         message_text='hi',
         protocol=protocol,
         dlr_url=dlr_url,
+        callback_url=callback_url,
         protocol_data={'dlr_mask': dlr_mask, 'smsc_message_ids': ids},
         status=MessageStatus.SENT,
         smsc='a',
@@ -167,6 +169,7 @@ class Recorder:
 
     def __init__(self, statuses=()):
         self.requests: list[web.Request] = []
+        self.bodies: list = []  # a POST's JSON, else None
         self.statuses = list(statuses)
         app = web.Application()
         app.router.add_route('*', '/dlr', self.handle)
@@ -174,7 +177,11 @@ class Recorder:
 
     async def handle(self, request):
         self.requests.append(request)
-        return web.Response(status=self.statuses.pop(0) if self.statuses else 200)
+        self.bodies.append(await request.json() if request.method == 'POST' else None)
+        status = self.statuses.pop(0) if self.statuses else 200
+        if 300 <= status < 400:
+            return web.Response(status=status, headers={'Location': '/dlr'})
+        return web.Response(status=status)
 
     def url(self, query='d=%d&id=%I&f=%F'):
         return str(self.server.make_url('/dlr')) + '?' + query
@@ -293,9 +300,9 @@ async def test_receipt_stores_status_and_callback_before_the_fetch(
     seen = []
     real_call = handler._call
 
-    async def call(message_id, url):
+    async def call(message_id, url, body):
         seen.append((store.messages[message_id].status, dict(store.dlr_callbacks)))
-        await real_call(message_id, url)
+        await real_call(message_id, url, body)
 
     monkeypatch.setattr(handler, '_call', call)
     message = sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
@@ -305,7 +312,8 @@ async def test_receipt_stores_status_and_callback_before_the_fetch(
     ((status, callbacks),) = seen
     assert status == MessageStatus.DELIVERED
     assert list(callbacks) == [message().message_id]
-    assert callbacks[message().message_id].startswith(recorder.url().split('?')[0])
+    url, body = callbacks[message().message_id]
+    assert url.startswith(recorder.url().split('?')[0]) and body is None
 
 
 @pytest.mark.asyncio
@@ -354,3 +362,96 @@ async def test_database_error_is_logged_and_swallowed(
     await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     assert "Receipt 's1'" in caplog.text and 'not saved' in caplog.text
     assert not handler._tasks  # no re-check, no fetch
+
+
+def rest_url(recorder):
+    return str(recorder.server.make_url('/dlr'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'state, status',
+    [
+        (MessageState.DELIVERED, 'delivered'),
+        (MessageState.UNDELIVERABLE, 'failed'),
+        (MessageState.EXPIRED, 'expired'),
+    ],
+)
+async def test_rest_final_status_is_posted(store, handler, recorder, state, status):
+    message = sent(store, ['s1'], callback_url=rest_url(recorder))
+    await handler.on_receipt(receipt('s1', state), 'a')
+    ((url, body),) = store.dlr_callbacks.values()  # stored with the status
+    assert url == rest_url(recorder)
+    await settle(handler)
+    assert [r.method for r in recorder.requests] == ['POST']
+    assert recorder.bodies == [body]
+    assert body.keys() == {'message_id', 'status', 'occurred_at'}
+    assert (body['message_id'], body['status']) == (message().message_id, status)
+    assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', body['occurred_at'])
+    assert store.dlr_callbacks == {}  # the 2xx forgot it
+
+
+@pytest.mark.asyncio
+async def test_rest_non_final_receipt_posts_nothing(store, handler, recorder):
+    sent(store, ['s1', 's2'], callback_url=rest_url(recorder))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await handler.on_receipt(receipt('s1', MessageState.ENROUTE), 'a')
+    await settle(handler)
+    assert recorder.requests == [] and store.dlr_callbacks == {}
+
+
+@pytest.mark.asyncio
+async def test_kannel_message_still_gets_only_its_get(store, handler, recorder):
+    sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1, callback_url='x')
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    assert [r.method for r in recorder.requests] == ['GET']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('statuses, made', [([500] * 3, 4), ([500] * 20, 8)])
+async def test_rest_retries_up_to_8_attempts(
+    store, uow_factory, recorder, monkeypatch, statuses, made
+):
+    waits = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(wait):
+        waits.append(wait)
+        await real_sleep(0)
+
+    monkeypatch.setattr(dlr_module.asyncio, 'sleep', sleep)
+    handler = DLRHandler(uow_factory)
+    await handler.start()
+    recorder.statuses = statuses
+    sent(store, ['s1'], callback_url=rest_url(recorder))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    await handler.stop()
+    assert len(recorder.requests) == made
+    assert waits == [2, 4, 8, 16, 32, 64, 128][: made - 1]
+    assert store.dlr_callbacks == {}
+
+
+@pytest.mark.asyncio
+async def test_resume_remakes_a_stored_post_with_its_body(
+    store, uow_factory, handler, recorder
+):
+    message = sent(store, ['s1'])
+    body = {'message_id': message().message_id, 'status': 'failed', 'occurred_at': 'x'}
+    store.dlr_callbacks[message().message_id] = (rest_url(recorder), body)
+    await handler.resume()
+    await settle(handler)
+    assert [r.method for r in recorder.requests] == ['POST']
+    assert recorder.bodies == [body]
+    assert store.dlr_callbacks == {}
+
+
+@pytest.mark.asyncio
+async def test_rest_redirect_is_retried_not_followed(store, handler, recorder):
+    recorder.statuses = [302]  # followed, it would be a body-less GET answered 200
+    sent(store, ['s1'], callback_url=rest_url(recorder))
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    assert [r.method for r in recorder.requests] == ['POST', 'POST']
+    assert all(recorder.bodies)

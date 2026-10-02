@@ -14,11 +14,13 @@ The API has no authentication. See <<Introduction>>.
 | `destination_addr` (or `to_number`) | yes | Recipient address.
 | `message_text` (or `message`) | yes | Message text.
 | `priority` | no | `high` or `normal` (the default). See below.
+| `callback_url` | no | An `http` or `https` URL with a host. {product} posts the message's
+final status to it. See <<Status callback>>.
 |===
 
-A body with any other field, or a `priority` other than `high` or `normal`, is rejected with
-`400`. There is no delivery callback, so a `dlr_url` is an unknown field too. Poll the
-message's status instead (see <<Message status>>).
+A body with any other field, a `priority` other than `high` or `normal`, or a `callback_url`
+that is not an `http` or `https` URL with a host, is rejected with `400`. A Kannel-style
+`dlr_url` is an unknown field too, so use `callback_url` instead.
 
 A `high` message leaves its SMSC's queue before every `normal` message waiting there, after a
 restart too. Within a level, messages leave in the order they were accepted. Priority orders
@@ -45,6 +47,38 @@ A queued message returns `200`:
 `200` means the message was queued, not sent. A missing field, a malformed body, or a number
 no SMSC takes (see <<Routing rules>>) returns `400` with `{"error": …, "details": …}`, and
 nothing is stored. The HTTP API has no way to name the SMSC.
+
+== Status callback
+
+A message submitted with a `callback_url` gets one `POST` to that URL when it reaches a final
+status, so the client need not poll. The body is JSON:
+
+[source,json]
+----
+{"message_id": "3f1c…", "status": "delivered", "occurred_at": "2026-09-26T10:39:12Z"}
+----
+
+[cols="1,4",options="header"]
+|===
+| Field | Meaning
+
+| `message_id` | The id the submit returned.
+| `status` | `delivered`, `failed` or `expired`. `sent` is not reported.
+| `occurred_at` | When {product} set the final status, in UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`.
+|===
+
+* Every final status is reported, whatever set it: a delivery receipt, or a send {product}
+  gave up on (the SMSC rejected it, or every retry failed), at startup too. See
+  <<Message delivery>>.
+* The URL has no escape codes, unlike a Kannel `dlr-url`: {product} adds nothing to it. The
+  HTTP client may normalise its percent-encoding (`%41` is sent as `A`, a stray `%` as `%25`),
+  which servers read the same way.
+* Any `2xx` answer ends the call. Anything else, a redirect or a connection error included,
+  is retried, up to 8 attempts, waiting 2, 4, 8 … 128 s between them (about 4 minutes in
+  all). Then the call is given up and logged. A redirect is not followed.
+* The call is stored with the status, so a call cut short by a restart is made again when
+  {product} starts. The client can therefore get the same status twice, and should treat a
+  repeat as a no-op.
 
 == Message status
 

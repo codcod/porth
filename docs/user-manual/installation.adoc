@@ -50,8 +50,8 @@ status change after that. After a stop or a crash, the next start:
 * sends the messages that were not sent yet (`pending` or `queued`, including those waiting
   to retry), oldest first. A message already `sent` is not sent again.
 * still matches later delivery receipts to their messages.
-* makes again any Kannel `dlr-url` call that was not finished, so a client can receive the
-  same callback twice.
+* makes again any Kannel `dlr-url` or HTTP `callback_url` call that was not finished, so a
+  client can receive the same callback twice.
 
 A message the SMSC accepted just before a crash, before {product} recorded it as `sent`, is
 sent again. See <<Limitations>>.

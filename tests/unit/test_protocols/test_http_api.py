@@ -185,3 +185,21 @@ async def test_health_sums_the_queues(http):
         )
         assert resp.status == 200
     assert (await (await client.get('/health')).json())['queue_size'] == 3
+
+
+@pytest.mark.asyncio
+async def test_callback_url_is_stored_as_is(http):
+    client, _, store = http
+    url = 'https://messgr.example/cb/t%41k?x=%d'
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'callback_url': url})
+    assert resp.status == 200
+    assert store.messages[(await resp.json())['message_id']].callback_url == url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('url', ['ftp://x', 'x', 5, 'http://', 'http://['])
+async def test_bad_callback_url_is_rejected(http, url):
+    client, queue, store = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'callback_url': url})
+    assert resp.status == 400
+    assert not store.messages and queue.empty()

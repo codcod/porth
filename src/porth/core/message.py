@@ -55,3 +55,5 @@ class SMSMessage:
     # DLR information
     dlr_requested: bool = True
     dlr_url: tp.Optional[str] = None
+    # REST: POSTed the final status (design.md §4.1)
+    callback_url: tp.Optional[str] = None

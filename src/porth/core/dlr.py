@@ -1,4 +1,5 @@
-"""Delivery receipts: correlate them to messages, fetch Kannel dlr-urls (design.md §4.2)."""
+"""Delivery receipts: correlate them to messages. Final statuses: write them, and call
+the Kannel dlr-url or REST status callback they are due (design.md §4.1, §4.2)."""
 
 import asyncio
 import logging
@@ -23,11 +24,15 @@ _DLR_BIT = {
     MessageStatus.FAILED: 2,
     MessageStatus.EXPIRED: 2,
 }
-_ATTEMPTS = 3
+_ATTEMPTS = 3  # a Kannel dlr-url GET: waits 1, 2 s
+_REST_ATTEMPTS = 8  # a REST status callback POST: waits 2, 4 … 128 s
 # Seconds between look-ups of a receipt's unknown SMSC id: a part's receipt can
 # beat the indexing of the message's ids, which waits for every part's submit_sm_resp.
 # ponytail: one task per unknown receipt, add a cap if an SMSC floods unknown ids
 _UNKNOWN_WAITS = (1, 2, 4, 8)
+
+# (message_id, url, body): a GET of url when body is None, else a POST of body
+Call = tuple[str, str, dict[str, tp.Any] | None]
 
 
 def expand_url(url: str, values: tp.Mapping[str, str | bytes]) -> str:
@@ -42,7 +47,8 @@ def expand_url(url: str, values: tp.Mapping[str, str | bytes]) -> str:
 
 
 class DLRHandler:
-    """Moves a message to its final status from receipts; calls its Kannel dlr-url."""
+    """Moves a message to its final status from receipts; every final status, whatever
+    sets it, is written through finalize(), which stores the call it is due."""
 
     def __init__(self, uow_factory: tp.Callable[[], AbstractUnitOfWork]):
         self.uow_factory = uow_factory
@@ -53,16 +59,16 @@ class DLRHandler:
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
 
     async def resume(self) -> None:
-        """Make the dlr-url calls a previous run stored but did not finish."""
+        """Make the calls a previous run (or recovery) stored but did not finish."""
         async with self.uow_factory() as uow:
             pending = await uow.messages.callbacks()
-        for message_id, url in pending:
-            self._spawn(self._fetch(message_id, url))
+        for call in pending:
+            self._spawn(self._fetch(*call))
         if pending:
-            logger.info(f'Resumed {len(pending)} dlr-url call(s) from the store')
+            logger.info(f'Resumed {len(pending)} final-status call(s) from the store')
 
     async def stop(self) -> None:
-        """Cancel tasks in flight; a cancelled dlr-url call stays stored for resume()."""
+        """Cancel tasks in flight; a cancelled call stays stored for resume()."""
         if self._session is None:
             return
         for task in self._tasks:
@@ -126,14 +132,13 @@ class DLRHandler:
                     )
                     return True
                 self._advance(message, receipt.state, smsc_id, now)
-                url = (
-                    self._callback_url(message, smsc_id, msg.text or '', now)
-                    if message.status in _TERMINAL
-                    else None
-                )
-                await uow.messages.update(message)
-                if url:
-                    await uow.messages.add_callback(message.message_id, url)
+                call = None
+                if message.status in _TERMINAL:
+                    call = await self.finalize(
+                        uow, message, now, smsc_id, msg.text or ''
+                    )
+                else:
+                    await uow.messages.update(message)
                 await uow.commit()
         except Exception:
             logger.exception(
@@ -145,10 +150,40 @@ class DLRHandler:
             logger.info(
                 f'Message {message.message_id} {message.status.value} (receipt)'
             )
-        if url:
-            # Own task, so smppai's receive loop never waits on the client's server
-            self._spawn(self._fetch(message.message_id, url))
+        # Own task, so smppai's receive loop never waits on the client's server
+        self.dispatch(call)
         return True
+
+    async def finalize(
+        self,
+        uow: AbstractUnitOfWork,
+        message: SMSMessage,
+        now: datetime,
+        smsc_id: tp.Optional[str] = None,
+        text: str = '',
+    ) -> tp.Optional[Call]:
+        """Write message's final status (set at now) in uow, with the call it is due.
+
+        The caller commits, then passes the returned call to dispatch(). A Kannel
+        dlr-url is due only when a receipt (smsc_id, text) drives the status.
+        """
+        assert message.status in _TERMINAL
+        await uow.messages.update(message)
+        call: tp.Optional[Call] = None
+        if message.protocol == 'http' and message.callback_url:
+            call = (message.message_id, message.callback_url, _rest_body(message, now))
+        elif smsc_id is not None and (
+            url := self._kannel_url(message, smsc_id, text, now)
+        ):
+            call = (message.message_id, url, None)
+        if call:
+            await uow.messages.add_callback(*call)
+        return call
+
+    def dispatch(self, call: tp.Optional[Call]) -> None:
+        """Make a call finalize() stored, once its unit of work has committed."""
+        if call:
+            self._spawn(self._fetch(*call))
 
     @staticmethod
     def _advance(
@@ -177,7 +212,7 @@ class DLRHandler:
             )
 
     @staticmethod
-    def _callback_url(
+    def _kannel_url(
         message: SMSMessage, smsc_id: str, text: str, now: datetime
     ) -> tp.Optional[str]:
         """The expanded Kannel dlr-url for this final status, or None if none is due."""
@@ -207,33 +242,60 @@ class DLRHandler:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _fetch(self, message_id: str, url: str) -> None:
-        """Call the dlr-url, then forget the stored call (at-least-once: a call
+    async def _fetch(
+        self, message_id: str, url: str, body: tp.Optional[dict[str, tp.Any]]
+    ) -> None:
+        """Make the call, then forget the stored call (at-least-once: a call
         cancelled by stop() stays stored and is made again by the next resume())."""
-        await self._call(message_id, url)
+        await self._call(message_id, url, body)
         try:
             async with self.uow_factory() as uow:
                 await uow.messages.delete_callback(message_id)
                 await uow.commit()
         except Exception:
             logger.exception(
-                f'dlr-url for {message_id} done, but still stored: '
+                f'{_kind(body)} for {message_id} done, but still stored: '
                 'the next start calls it again'
             )
 
-    async def _call(self, message_id: str, url: str) -> None:
+    async def _call(
+        self, message_id: str, url: str, body: tp.Optional[dict[str, tp.Any]]
+    ) -> None:
+        """GET url (Kannel) or POST body to it (REST), retrying until a 2xx."""
         assert self._session is not None
-        for attempt in range(_ATTEMPTS):
+        kind = _kind(body)
+        attempts = _ATTEMPTS if body is None else _REST_ATTEMPTS
+        for attempt in range(attempts):
             try:
-                async with self._session.get(url) as response:
+                # Not followed: a 3xx would turn the POST into a body-less GET whose
+                # 2xx counts as delivered, so it is retried like any non-2xx
+                request = (
+                    self._session.get(url)
+                    if body is None
+                    else self._session.post(url, json=body, allow_redirects=False)
+                )
+                async with request as response:
                     if 200 <= response.status < 300:
                         return
                     error = f'HTTP {response.status}'
             except Exception as e:  # client-supplied URL: anything can go wrong
                 error = repr(e)
             logger.warning(
-                f'dlr-url for {message_id}, attempt {attempt + 1}/{_ATTEMPTS}: {error}'
+                f'{kind} for {message_id}, attempt {attempt + 1}/{attempts}: {error}'
             )
-            if attempt + 1 < _ATTEMPTS:
-                await asyncio.sleep(2**attempt)
-        logger.error(f'dlr-url for {message_id} gave up after {_ATTEMPTS} attempts')
+            if attempt + 1 < attempts:
+                await asyncio.sleep(2 ** (attempt if body is None else attempt + 1))
+        logger.error(f'{kind} for {message_id} gave up after {attempts} attempts')
+
+
+def _kind(body: tp.Optional[dict[str, tp.Any]]) -> str:
+    return 'dlr-url' if body is None else 'status callback'
+
+
+def _rest_body(message: SMSMessage, now: datetime) -> dict[str, tp.Any]:
+    """The REST status callback's body (design.md §4.1); now is UTC."""
+    return {
+        'message_id': message.message_id,
+        'status': message.status.value,
+        'occurred_at': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }

@@ -52,7 +52,14 @@ async def test_smpp_message_flow(uow_factory):
         'a',
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
     )
-    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
+    engine = DeliveryEngine(
+        'a',
+        porth_client,
+        MessageQueue(),
+        uow_factory,
+        Settings(),
+        DLRHandler(uow_factory),
+    )
     message = SMSMessage(
         source_addr='1234',
         destination_addr='5678',
@@ -93,7 +100,14 @@ async def test_long_message_goes_out_in_parts(uow_factory):
         'a',
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
     )
-    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
+    engine = DeliveryEngine(
+        'a',
+        porth_client,
+        MessageQueue(),
+        uow_factory,
+        Settings(),
+        DLRHandler(uow_factory),
+    )
     message = SMSMessage(
         source_addr='1234',
         destination_addr='5678',
@@ -138,7 +152,14 @@ async def send_and_receipt(message: SMSMessage) -> SMSMessage:
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_receipt=functools.partial(handler.on_receipt, smsc='a'),
     )
-    engine = DeliveryEngine('a', porth_client, MessageQueue(), uow_factory, Settings())
+    engine = DeliveryEngine(
+        'a',
+        porth_client,
+        MessageQueue(),
+        uow_factory,
+        Settings(),
+        DLRHandler(uow_factory),
+    )
     message.smsc = 'a'
     await store.add(message)
 
@@ -237,7 +258,9 @@ async def test_mo_reaches_the_application_and_its_reply_goes_back(uow_factory):
         SMPPClientConfig(host='127.0.0.1', port=port, system_id='porth', password='pw'),
         on_mo=functools.partial(handler.on_mo, smsc='a'),
     )
-    engine = DeliveryEngine('a', porth_client, queue, uow_factory, Settings())
+    engine = DeliveryEngine(
+        'a', porth_client, queue, uow_factory, Settings(), DLRHandler(uow_factory)
+    )
 
     await server.start()
     await handler.start()
