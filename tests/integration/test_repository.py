@@ -68,6 +68,7 @@ async def test_add_get_round_trips_every_column(db):
         dlr_requested=False,
         dlr_url='http://x/?d=%d',
         smsc='op-a',
+        priority='high',
     )
     await add(engine, message)
     async with SqlAlchemyUnitOfWork(engine) as uow:
@@ -177,6 +178,25 @@ async def test_status_check_rejects_bogus(db):
     with pytest.raises(IntegrityError, match='messages_status_check'):
         async with engine.begin() as conn:
             await conn.execute(sa.insert(messages).values({**row, 'status': 'bogus'}))
+
+
+@pytest.mark.asyncio
+async def test_priority_defaults_to_normal_and_rejects_bogus(db):
+    engine, ids = db
+    message = new(ids)
+    row = {c.name: getattr(message, c.name) for c in messages.columns}
+    del row['priority']  # a row written before the column existed
+    async with engine.begin() as conn:
+        await conn.execute(sa.insert(messages).values(row))
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        assert (await uow.messages.get(message.message_id)).priority == 'normal'
+    with pytest.raises(IntegrityError, match='messages_priority_check'):
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.update(messages)
+                .where(messages.c.message_id == message.message_id)
+                .values(priority='urgent')
+            )
 
 
 @pytest.mark.asyncio

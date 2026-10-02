@@ -109,24 +109,43 @@ async def test_unknown_id_is_404(http):
 
 
 @pytest.mark.asyncio
-async def test_dlr_url_is_rejected(http):
+@pytest.mark.parametrize(
+    'field, value',
+    [
+        ('dlr_url', 'http://example.com/dlr'),
+        ('dlr_url', None),
+        ('dlr_url', ''),
+        ('colour', 'red'),
+    ],
+)
+async def test_unknown_field_is_rejected(http, field, value):
     client, queue, store = http
-    resp = await client.post(
-        '/api/v1/sms/send', json={**BODY, 'dlr_url': 'http://example.com/dlr'}
-    )
+    resp = await client.post('/api/v1/sms/send', json={**BODY, field: value})
     assert resp.status == 400
-    assert 'dlr_url is not supported' in (await resp.json())['details']
+    assert (await resp.json())['details'] == f"unknown field(s): ['{field}']"
     assert queue.empty()
     assert store.messages == {}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('empty', [None, ''])
-async def test_empty_dlr_url_is_accepted(http, empty):
-    client, queue, _ = http
-    resp = await client.post('/api/v1/sms/send', json={**BODY, 'dlr_url': empty})
+@pytest.mark.parametrize('sent, kept', [('high', 'high'), (None, 'normal')])
+async def test_priority_is_stored(http, sent, kept):
+    client, _, store = http
+    body = BODY if sent is None else {**BODY, 'priority': sent}
+    resp = await client.post('/api/v1/sms/send', json=body)
     assert resp.status == 200
-    assert queue.qsize() == 1
+    assert store.messages[(await resp.json())['message_id']].priority == kept
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('priority', ['urgent', 1])
+async def test_bad_priority_is_rejected(http, priority):
+    client, queue, store = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'priority': priority})
+    assert resp.status == 400
+    assert 'priority' in (await resp.json())['details']
+    assert queue.empty()
+    assert store.messages == {}
 
 
 @pytest.mark.asyncio

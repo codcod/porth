@@ -45,6 +45,20 @@ def create_http_app(
     return app
 
 
+# Every submit field porth knows; any other is refused (design.md §4.1)
+_FIELDS = frozenset(
+    {
+        'from_number',
+        'source_addr',
+        'to_number',
+        'destination_addr',
+        'message',
+        'message_text',
+        'priority',
+    }
+)
+
+
 def text_field(data: tp.Mapping[str, tp.Any], *names: str) -> str:
     """The first non-empty value among names (aliases), which must be a string."""
     for name in names:
@@ -63,12 +77,14 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
         if not isinstance(data, dict):
             raise ValueError('request body must be a JSON object')
 
-        # Status is polled, never pushed (design.md §4.2); a silently ignored
-        # dlr_url would leave the client waiting for a callback that never comes
-        if data.get('dlr_url'):
-            raise ValueError(
-                'dlr_url is not supported; poll GET /api/v1/sms/status/{message_id}'
-            )
+        # A silently ignored field would leave the client relying on behaviour
+        # porth does not have (a dlr_url callback, say)
+        unknown = data.keys() - _FIELDS
+        if unknown:
+            raise ValueError(f'unknown field(s): {sorted(unknown)}')
+        priority = data.get('priority', 'normal')
+        if priority not in ('high', 'normal'):
+            raise ValueError("priority must be 'high' or 'normal'")
 
         # Support both field naming conventions
         message = SMSMessage(
@@ -81,6 +97,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
                 'user_agent': request.headers.get('User-Agent', ''),
             },
             status=MessageStatus.QUEUED,
+            priority=priority,
         )
         # NoRoute is a 400 like any other rejection
         message.smsc = request.app['main_app']['router'].route(message.destination_addr)

@@ -49,6 +49,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `python -m porth.main --check <file>`, which `make config-check` now runs, validates a
   configuration as startup does, routing rules and each SMSC's `throughput` included,
   without connecting to anything (POR-020).
+- An optional `priority` (`high` or `normal`, the default) on `POST /api/v1/sms/send`. A
+  `high` message leaves its SMSC's queue before every waiting `normal` one, after a restart
+  too (POR-025).
 
 **Changed**
 
@@ -70,7 +73,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - smppai is upgraded from 0.2.8 to 0.9.1 (POR-011).
 - Every message requests a delivery receipt (`registered_delivery = 1`), not only Kannel
   messages and HTTP messages with `dlr_url` (POR-009).
-- The HTTP API rejects a body with a non-empty `dlr_url` with `400`. Status is polled, never
+- The HTTP API rejects a body with a `dlr_url` with `400` (any `dlr_url`, empty too, since
+  POR-025). Status is polled, never
   pushed. Before, `dlr_url` was accepted and no callback was ever sent (POR-009).
 - The SMPP bind is retried in the background every 10 s while it is down, including after a
   failed startup bind. Before, only the next send rebound it (POR-013).
@@ -112,6 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   kept intact as `%%C3%%A9` (POR-013).
 - An SMSC named `""` is refused at startup instead of being silently skipped by routing, and
   a `throughput` below 1 names its key: `invalid porth.smsc.<name>.throughput` (POR-029).
+- **Breaking:** `POST /api/v1/sms/send` rejects a body with any field it does not know with
+  `400`, naming the field. Before, an unknown field was silently ignored (POR-025).
 
 ## [0.1.0] - 2026-09-22
 

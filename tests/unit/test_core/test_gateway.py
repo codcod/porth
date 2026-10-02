@@ -49,7 +49,7 @@ def test_no_db_and_no_factory_raises():
         SMSGateway(Settings())
 
 
-def stored(repo, status, minutes_ago, smsc='a', to='306900000001'):
+def stored(repo, status, minutes_ago, smsc='a', to='306900000001', priority='normal'):
     message = SMSMessage(
         source_addr='A',
         destination_addr=to,
@@ -58,6 +58,7 @@ def stored(repo, status, minutes_ago, smsc='a', to='306900000001'):
         status=status,
         created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
         smsc=smsc,
+        priority=priority,
     )
     repo.messages[message.message_id] = message
     return message
@@ -87,7 +88,7 @@ def quiet(gateway, monkeypatch):
 
 
 def drain(queue) -> list[str]:
-    return [queue._queue.get_nowait().message_id for _ in range(queue.qsize())]
+    return [queue._queue.get_nowait()[2].message_id for _ in range(queue.qsize())]
 
 
 @pytest.mark.asyncio
@@ -115,6 +116,21 @@ async def test_start_requeues_unsent_oldest_first_and_resumes_callbacks(
         assert 'Re-queued 2 message(s) from the store' in caplog.text
         await asyncio.sleep(0)
         assert resumed == [(done.message_id, 'http://127.0.0.1:1/dlr')]
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_puts_high_priority_first(uow_factory, monkeypatch):
+    repo = uow_factory.repo
+    normal = stored(repo, MessageStatus.QUEUED, 5)
+    high = stored(repo, MessageStatus.QUEUED, 1, priority='high')
+
+    gateway = SMSGateway(two_smscs(), uow_factory)
+    quiet(gateway, monkeypatch)
+    await gateway.start()
+    try:
+        assert drain(gateway.queues['a']) == [high.message_id, normal.message_id]
     finally:
         await gateway.stop()
 

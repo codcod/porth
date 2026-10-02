@@ -24,11 +24,13 @@ messages = sa.Table(
     sa.Column('dlr_requested', sa.Boolean(), nullable=False),
     sa.Column('dlr_url', sa.Text(), nullable=True),
     sa.Column('smsc', sa.Text(), nullable=True),  # null: stored before routing
+    sa.Column('priority', sa.Text(), nullable=False, server_default='normal'),
     sa.CheckConstraint(
         "status IN ('pending','queued','sent','delivered','failed','expired')",
         name='messages_status_check',
     ),
     sa.CheckConstraint("protocol IN ('http','kannel')", name='messages_protocol_check'),
+    sa.CheckConstraint("priority IN ('normal','high')", name='messages_priority_check'),
 )
 
 # The receipt lookup index: (SMSC, its message id) -> the latest message that got it

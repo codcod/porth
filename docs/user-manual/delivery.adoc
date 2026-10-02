@@ -53,6 +53,13 @@ a retry. An `ESME_RTHROTTLED` answer from the SMSC still goes through the normal
 A message with more parts than the cap still goes out whole, and goes over the cap by its own
 extra parts. The sends after it wait until the cap holds again.
 
+A `high` priority message (see <<Send a message>>) leaves the queue first, but still waits
+for its turn under the cap like any other. Each worker takes its next message off the queue
+before it waits for its turn, so with a backlog a `high` message can still go out after up to
+`delivery.worker_count` messages already taken, about `worker_count / throughput` seconds
+(2 s with the default 10 workers at 5 per second). A lower `worker_count` on a throttled SMSC
+shortens that.
+
 {product} counts each message's parts at the moment its turn starts. The parts themselves go
 out one after another, each once the SMSC has answered the one before, so a message's later
 parts leave a little late. With a high cap and a slow SMSC, a second can carry a few more PDUs
