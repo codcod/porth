@@ -38,6 +38,9 @@ class SMSMessage:
     # The SMSC it goes out through, set at submit (None: stored before routing)
     smsc: tp.Optional[str] = None
 
+    # 'high' leaves its SMSC's queue before any waiting 'normal' (design.md §4.2)
+    priority: str = 'normal'
+
     # Timing
     created_at: datetime = dataclasses.field(
         default_factory=lambda: datetime.now(timezone.utc)
