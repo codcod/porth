@@ -6,6 +6,7 @@ import functools
 import logging
 import signal
 import typing as tp
+from datetime import datetime, timezone
 
 from aiohttp import web
 from monobase.config import setup_logging
@@ -62,7 +63,12 @@ class SMSGateway:
                 on_mo=functools.partial(self.mo_handler.on_mo, smsc=name),
             )
             self.engines[name] = DeliveryEngine(
-                name, smpp_client, self.queues[name], uow_factory, settings
+                name,
+                smpp_client,
+                self.queues[name],
+                uow_factory,
+                settings,
+                self.dlr_handler,
             )
             self.smpp_clients.append(smpp_client)
 
@@ -129,8 +135,14 @@ class SMSGateway:
                 f'Message {message.message_id}: SMSC {was!r} is not configured '
                 f'and {e}: failed'
             )
+        # A failed one's call is stored, not dispatched: resume() makes it, once
+        # the handler has started
         async with self.uow_factory() as uow:
-            await uow.messages.update(message)
+            if message.status == MessageStatus.FAILED:
+                now = datetime.now(timezone.utc)
+                await self.dlr_handler.finalize(uow, message, now)
+            else:
+                await uow.messages.update(message)
             await uow.commit()
 
     async def _serve(self, app: web.Application, config: HTTPConfig | KannelConfig):

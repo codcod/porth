@@ -3,6 +3,7 @@
 import logging
 import typing as tp
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from aiohttp import web, web_request, web_response
 
@@ -55,6 +56,7 @@ _FIELDS = frozenset(
         'message',
         'message_text',
         'priority',
+        'callback_url',
     }
 )
 
@@ -78,13 +80,19 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             raise ValueError('request body must be a JSON object')
 
         # A silently ignored field would leave the client relying on behaviour
-        # porth does not have (a dlr_url callback, say)
+        # porth does not have (a Kannel-style dlr_url, say)
         unknown = data.keys() - _FIELDS
         if unknown:
             raise ValueError(f'unknown field(s): {sorted(unknown)}')
         priority = data.get('priority', 'normal')
         if priority not in ('high', 'normal'):
             raise ValueError("priority must be 'high' or 'normal'")
+        # Taken as is: no escape codes (design.md §4.1)
+        callback_url = data.get('callback_url')
+        if callback_url is not None:
+            parts = urlsplit(callback_url) if isinstance(callback_url, str) else None
+            if not parts or parts.scheme not in ('http', 'https') or not parts.hostname:
+                raise ValueError('callback_url must be an http(s) URL with a host')
 
         # Support both field naming conventions
         message = SMSMessage(
@@ -98,6 +106,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             },
             status=MessageStatus.QUEUED,
             priority=priority,
+            callback_url=callback_url,
         )
         # NoRoute is a 400 like any other rejection
         message.smsc = request.app['main_app']['router'].route(message.destination_addr)

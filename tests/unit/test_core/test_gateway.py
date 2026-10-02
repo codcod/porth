@@ -101,7 +101,7 @@ async def test_start_requeues_unsent_oldest_first_and_resumes_callbacks(
     for status in (MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.FAILED):
         stored(repo, status, 3)
     done = stored(repo, MessageStatus.DELIVERED, 2)
-    repo.dlr_callbacks[done.message_id] = 'http://127.0.0.1:1/dlr'
+    repo.dlr_callbacks[done.message_id] = ('http://127.0.0.1:1/dlr', None)
 
     gateway = SMSGateway(two_smscs(), uow_factory)
     resumed = []
@@ -115,7 +115,7 @@ async def test_start_requeues_unsent_oldest_first_and_resumes_callbacks(
         assert gateway.queues['b'].empty()
         assert 'Re-queued 2 message(s) from the store' in caplog.text
         await asyncio.sleep(0)
-        assert resumed == [(done.message_id, 'http://127.0.0.1:1/dlr')]
+        assert resumed == [(done.message_id, 'http://127.0.0.1:1/dlr', None)]
     finally:
         await gateway.stop()
 
@@ -153,6 +153,28 @@ async def test_recovery_reroutes_a_message_whose_smsc_is_gone(uow_factory, monke
         assert repo.messages[removed.message_id].smsc == 'b'
         assert repo.messages[unrouted.message_id].smsc == 'a'
         assert repo.messages[lost.message_id].status == MessageStatus.FAILED
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_failed_stores_its_callback_and_resume_makes_it_once(
+    uow_factory, monkeypatch
+):
+    lost = stored(uow_factory.repo, MessageStatus.QUEUED, 1, smsc='gone', to='1555')
+    lost.callback_url = 'http://m/cb'
+    gateway = SMSGateway(two_smscs(), uow_factory)
+    made = []
+    monkeypatch.setattr(
+        gateway.dlr_handler, '_fetch', lambda *args: _record(made, args)
+    )
+    quiet(gateway, monkeypatch)
+    await gateway.start()
+    try:
+        await asyncio.sleep(0)
+        ((message_id, url, body),) = made
+        assert (message_id, url) == (lost.message_id, 'http://m/cb')
+        assert body['status'] == 'failed'
     finally:
         await gateway.stop()
 

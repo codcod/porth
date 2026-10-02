@@ -17,7 +17,7 @@ class FakeMessageRepository(AbstractMessageRepository):
     def __init__(self) -> None:
         self.messages: dict[str, SMSMessage] = {}
         self.smsc_ids: dict[tuple[str, str], str] = {}  # (smsc, smsc_id) -> id
-        self.dlr_callbacks: dict[str, str] = {}
+        self.dlr_callbacks: dict[str, tuple[str, dict[str, tp.Any] | None]] = {}
 
     @tp.override
     async def add(self, item: SMSMessage) -> None:
@@ -54,18 +54,20 @@ class FakeMessageRepository(AbstractMessageRepository):
         return copy.deepcopy(sorted(found, key=lambda m: m.created_at))
 
     @tp.override
-    async def add_callback(self, message_id: str, url: str) -> None:
+    async def add_callback(
+        self, message_id: str, url: str, body: dict[str, tp.Any] | None = None
+    ) -> None:
         if message_id in self.dlr_callbacks:
             raise IntegrityError('INSERT', None, Exception('duplicate message_id'))
-        self.dlr_callbacks[message_id] = url
+        self.dlr_callbacks[message_id] = (url, copy.deepcopy(body))
 
     @tp.override
     async def delete_callback(self, message_id: str) -> None:
         self.dlr_callbacks.pop(message_id, None)
 
     @tp.override
-    async def callbacks(self) -> list[tuple[str, str]]:
-        return list(self.dlr_callbacks.items())
+    async def callbacks(self) -> list[tuple[str, str, dict[str, tp.Any] | None]]:
+        return [(id, url, body) for id, (url, body) in self.dlr_callbacks.items()]
 
 
 class FakeUnitOfWork(AbstractUnitOfWork):

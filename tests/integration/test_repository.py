@@ -163,11 +163,33 @@ async def test_callbacks_add_list_delete(db):
         await uow.messages.add_callback(message.message_id, 'http://x/?d=1')
         await uow.commit()
     async with SqlAlchemyUnitOfWork(engine) as uow:
-        assert (message.message_id, 'http://x/?d=1') in await uow.messages.callbacks()
+        assert (
+            message.message_id,
+            'http://x/?d=1',
+            None,
+        ) in await uow.messages.callbacks()
         await uow.messages.delete_callback(message.message_id)
         await uow.commit()
     async with SqlAlchemyUnitOfWork(engine) as uow:
-        assert message.message_id not in dict(await uow.messages.callbacks())
+        assert message.message_id not in [c[0] for c in await uow.messages.callbacks()]
+
+
+@pytest.mark.asyncio
+async def test_callback_body_and_callback_url_round_trip(db):
+    engine, ids = db
+    message = new(ids, callback_url='https://m/t/tok')
+    await add(engine, message)
+    body = {'message_id': message.message_id, 'status': 'failed', 'occurred_at': 'x'}
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.add_callback(message.message_id, 'https://m/t/tok', body)
+        await uow.commit()
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        assert (await uow.messages.get(message.message_id)).callback_url == (
+            'https://m/t/tok'
+        )
+        assert (message.message_id, 'https://m/t/tok', body) in (
+            await uow.messages.callbacks()
+        )
 
 
 @pytest.mark.asyncio
@@ -208,7 +230,7 @@ async def test_deleting_a_message_cascades(db):
         await uow.messages.add_smsc_ids(
             message.message_id, 'a', [f's-{message.message_id}']
         )
-        await uow.messages.add_callback(message.message_id, 'http://x/')
+        await uow.messages.add_callback(message.message_id, 'http://x/', {'s': 'x'})
         await uow.commit()
     async with engine.begin() as conn:
         await conn.execute(

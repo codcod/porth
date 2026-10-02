@@ -52,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - An optional `priority` (`high` or `normal`, the default) on `POST /api/v1/sms/send`. A
   `high` message leaves its SMSC's queue before every waiting `normal` one, after a restart
   too (POR-025).
+- An optional `callback_url` (`http` or `https`, with a host; anything else is `400`) on
+  `POST /api/v1/sms/send`. The message's final status (`delivered`, `failed` or `expired`,
+  whatever set it: a receipt, a send given up on, or startup recovery) is `POST`ed there as
+  `{"message_id", "status", "occurred_at"}`. A non-2xx answer, a redirect included, is retried
+  up to 8 attempts over about 4 minutes, and a call cut short by a restart is made again at
+  the next start. The Kannel `dlr-url` keeps its 3 attempts (POR-026).
 
 **Changed**
 
@@ -74,8 +80,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Every message requests a delivery receipt (`registered_delivery = 1`), not only Kannel
   messages and HTTP messages with `dlr_url` (POR-009).
 - The HTTP API rejects a body with a `dlr_url` with `400` (any `dlr_url`, empty too, since
-  POR-025). Status is polled, never
-  pushed. Before, `dlr_url` was accepted and no callback was ever sent (POR-009).
+  POR-025). A message's status is polled, or pushed to its `callback_url` (POR-026). Before,
+  `dlr_url` was accepted and no callback was ever sent (POR-009).
 - The SMPP bind is retried in the background every 10 s while it is down, including after a
   failed startup bind. Before, only the next send rebound it (POR-013).
 - A failed send is retried after a wait that grows by `delivery.backoff_factor` (default 2)

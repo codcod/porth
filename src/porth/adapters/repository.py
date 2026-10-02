@@ -1,4 +1,4 @@
-"""Message repository: SMSMessage rows, their SMSC ids and pending dlr-url calls."""
+"""Message repository: SMSMessage rows, their SMSC ids and pending final-status calls."""
 
 import abc
 import typing as tp
@@ -34,14 +34,17 @@ class AbstractMessageRepository(AbstractRepository[SMSMessage]):
         """pending/queued messages, oldest first."""
 
     @abc.abstractmethod
-    async def add_callback(self, message_id: str, url: str) -> None: ...
+    async def add_callback(
+        self, message_id: str, url: str, body: dict[str, tp.Any] | None = None
+    ) -> None:
+        """Store a call: a GET of url when body is None, else a POST of body."""
 
     @abc.abstractmethod
     async def delete_callback(self, message_id: str) -> None: ...
 
     @abc.abstractmethod
-    async def callbacks(self) -> list[tuple[str, str]]:
-        """(message_id, url) of every dlr-url call not yet made."""
+    async def callbacks(self) -> list[tuple[str, str, dict[str, tp.Any] | None]]:
+        """(message_id, url, body) of every call not yet made."""
 
 
 class SqlAlchemyMessageRepository(AbstractMessageRepository):
@@ -114,9 +117,11 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
         return [_message(row) for row in result]
 
     @tp.override
-    async def add_callback(self, message_id: str, url: str) -> None:
+    async def add_callback(
+        self, message_id: str, url: str, body: dict[str, tp.Any] | None = None
+    ) -> None:
         await self.connection.execute(
-            sa.insert(dlr_callbacks).values(message_id=message_id, url=url)
+            sa.insert(dlr_callbacks).values(message_id=message_id, url=url, body=body)
         )
 
     @tp.override
@@ -126,11 +131,13 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
         )
 
     @tp.override
-    async def callbacks(self) -> list[tuple[str, str]]:
+    async def callbacks(self) -> list[tuple[str, str, dict[str, tp.Any] | None]]:
         result = await self.connection.execute(
-            sa.select(dlr_callbacks.c.message_id, dlr_callbacks.c.url)
+            sa.select(
+                dlr_callbacks.c.message_id, dlr_callbacks.c.url, dlr_callbacks.c.body
+            )
         )
-        return [(row.message_id, row.url) for row in result]
+        return [(row.message_id, row.url, row.body) for row in result]
 
 
 def _message(row: sa.Row) -> SMSMessage:
