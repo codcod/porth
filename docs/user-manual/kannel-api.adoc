@@ -71,6 +71,9 @@ fetches the message's `dlr-url` if `dlr-mask` includes the outcome:
 | `failed` or `expired` | 2 | `2`
 |===
 
+A message that {product} expires because no receipt came within `store.dlr_timeout_hours`
+gets no `dlr-url` fetch, as Kannel never expires a message on its own.
+
 `dlr-mask` must be an integer. A missing or non-integer mask means no callback. The other
 Kannel bits (4, 8, 16) are never produced yet (POR-005).
 

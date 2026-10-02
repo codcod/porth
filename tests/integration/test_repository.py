@@ -243,3 +243,96 @@ async def test_deleting_a_message_cascades(db):
                 .where(table.c.message_id == message.message_id)
             )
             assert count == 0
+
+
+# Far in the past, so the database's other rows stay out of the sweep queries
+LONG_AGO = datetime(2000, 1, 1, tzinfo=timezone.utc)
+CUTOFF = LONG_AGO + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_unreceipted_is_sent_awaiting_a_receipt_before_cutoff(db):
+    engine, ids = db
+    older = new(ids, MessageStatus.SENT, sent_at=LONG_AGO)
+    newer = new(ids, MessageStatus.SENT, sent_at=LONG_AGO + timedelta(hours=1))
+    others = [
+        new(ids, MessageStatus.SENT, sent_at=CUTOFF + timedelta(hours=1)),
+        new(ids, MessageStatus.SENT, sent_at=LONG_AGO, dlr_requested=False),
+        new(ids, MessageStatus.DELIVERED, sent_at=LONG_AGO),
+    ]
+    await add(engine, newer, older, *others)
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        got = [m.message_id for m in await uow.messages.unreceipted(CUTOFF, 10)]
+        assert [m.message_id for m in await uow.messages.unreceipted(CUTOFF, 1)] == [
+            older.message_id
+        ]
+    assert got == [older.message_id, newer.message_id]
+
+
+@pytest.mark.asyncio
+async def test_unreceipted_skips_a_row_another_transaction_holds(db):
+    engine, ids = db
+    held = new(ids, MessageStatus.SENT, sent_at=LONG_AGO)
+    free = new(ids, MessageStatus.SENT, sent_at=LONG_AGO + timedelta(hours=1))
+    await add(engine, held, free)
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.select(messages)
+            .where(messages.c.message_id == held.message_id)
+            .with_for_update()
+        )
+        async with SqlAlchemyUnitOfWork(engine) as uow:
+            got = [m.message_id for m in await uow.messages.unreceipted(CUTOFF, 10)]
+    assert got == [free.message_id]
+
+
+@pytest.mark.asyncio
+async def test_evict_deletes_finished_before_cutoff_with_their_smsc_ids(db):
+    engine, ids = db
+    doomed = [
+        new(ids, status, created_at=LONG_AGO)
+        for status in (
+            MessageStatus.DELIVERED,
+            MessageStatus.FAILED,
+            MessageStatus.EXPIRED,
+        )
+    ]
+    doomed.append(
+        new(ids, MessageStatus.SENT, created_at=LONG_AGO, dlr_requested=False)
+    )
+    kept = [
+        new(ids, MessageStatus.PENDING, created_at=LONG_AGO),
+        new(ids, MessageStatus.QUEUED, created_at=LONG_AGO),
+        new(ids, MessageStatus.SENT, created_at=LONG_AGO),  # awaiting its receipt
+        new(ids, MessageStatus.DELIVERED, created_at=CUTOFF + timedelta(hours=1)),
+        new(ids, MessageStatus.EXPIRED, created_at=LONG_AGO),  # its call still owed
+    ]
+    await add(engine, *doomed, *kept)
+    first, owed = doomed[0].message_id, kept[-1].message_id
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.add_smsc_ids(first, 'a', [f's-{first}'])
+        await uow.messages.add_callback(owed, 'http://x/', {'s': 'x'})
+        await uow.commit()
+
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        assert await uow.messages.evict(CUTOFF, 3) == 3
+        assert await uow.messages.evict(CUTOFF, 10) == 1
+        await uow.commit()
+
+    async with engine.begin() as conn:
+        left = await conn.scalars(
+            sa.select(messages.c.message_id).where(messages.c.message_id.in_(ids))
+        )
+        assert set(left) == {m.message_id for m in kept}
+        count = await conn.scalar(
+            sa.select(sa.func.count())
+            .select_from(smsc_ids)
+            .where(smsc_ids.c.message_id == first)
+        )
+        assert count == 0
+
+    # Once its call is made, the owed message goes too
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.delete_callback(owed)
+        assert await uow.messages.evict(CUTOFF, 10) == 1
+        await uow.commit()

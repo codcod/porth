@@ -12,8 +12,6 @@ The ticket reference identifies the planned change.
 | SMSC routing | Kannel's `unified-prefix` and per-SMSC `allowed-prefix`, `denied-prefix`
 and `preferred-prefix` lists are not supported. Rewrite the rules as one prefix table (see
 <<Routing rules>>). | —
-| Receipt timeout | A message with no receipt never becomes `expired`. | POR-003
-| Message records | Kept in PostgreSQL. Nothing is evicted. | POR-003
 | Restart window | A message the SMSC accepted just before a crash, before {product}
 recorded it as `sent`, is sent again. So is one {product} could not record as `sent` because
 the database was unavailable for its retries (about 7 s); its receipts are also ignored. A receipt that arrives before {product} has recorded

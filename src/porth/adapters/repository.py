@@ -2,6 +2,7 @@
 
 import abc
 import typing as tp
+from datetime import datetime
 
 import sqlalchemy as sa
 from monobase.repository import AbstractRepository
@@ -12,6 +13,11 @@ from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
 from porth.core.message import MessageStatus, SMSMessage
 
 _UNSENT = (MessageStatus.PENDING.value, MessageStatus.QUEUED.value)
+_FINISHED = (
+    MessageStatus.DELIVERED.value,
+    MessageStatus.FAILED.value,
+    MessageStatus.EXPIRED.value,
+)
 
 
 class AbstractMessageRepository(AbstractRepository[SMSMessage]):
@@ -32,6 +38,17 @@ class AbstractMessageRepository(AbstractRepository[SMSMessage]):
     @abc.abstractmethod
     async def unsent(self) -> list[SMSMessage]:
         """pending/queued messages, oldest first."""
+
+    @abc.abstractmethod
+    async def unreceipted(self, cutoff: datetime, limit: int) -> list[SMSMessage]:
+        """Up to limit sent messages awaiting a receipt since before cutoff, oldest
+        first, row-locked until the commit; rows another transaction holds are skipped."""
+
+    @abc.abstractmethod
+    async def evict(self, cutoff: datetime, limit: int) -> int:
+        """Delete up to limit finished messages created before cutoff (with their SMSC
+        ids); the number deleted. A message awaiting a receipt is not finished, and one
+        whose final-status call is still stored is kept until the call is made."""
 
     @abc.abstractmethod
     async def add_callback(
@@ -115,6 +132,52 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
             .order_by(messages.c.created_at)
         )
         return [_message(row) for row in result]
+
+    @tp.override
+    async def unreceipted(self, cutoff: datetime, limit: int) -> list[SMSMessage]:
+        result = await self.connection.execute(
+            sa.select(messages)
+            .where(
+                messages.c.status == MessageStatus.SENT.value,
+                messages.c.dlr_requested,
+                messages.c.sent_at < cutoff,
+            )
+            .order_by(messages.c.sent_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return [_message(row) for row in result]
+
+    @tp.override
+    async def evict(self, cutoff: datetime, limit: int) -> int:
+        finished = sa.or_(
+            messages.c.status.in_(_FINISHED),
+            sa.and_(
+                messages.c.status == MessageStatus.SENT.value,
+                sa.not_(messages.c.dlr_requested),
+            ),
+        )
+        doomed = (
+            sa.select(messages.c.message_id)
+            .where(
+                messages.c.created_at < cutoff,
+                finished,
+                # Its call is still owed: the cascade would lose it on a restart
+                ~sa.exists().where(dlr_callbacks.c.message_id == messages.c.message_id),
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+            # Evaluated once: as a plain IN subquery PostgreSQL may re-run it, and
+            # delete more than limit
+            .cte('doomed')
+            .prefix_with('MATERIALIZED')
+        )
+        result = await self.connection.execute(
+            sa.delete(messages).where(
+                messages.c.message_id.in_(sa.select(doomed.c.message_id))
+            )
+        )
+        return result.rowcount
 
     @tp.override
     async def add_callback(
