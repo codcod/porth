@@ -203,3 +203,58 @@ async def test_bad_callback_url_is_rejected(http, url):
     resp = await client.post('/api/v1/sms/send', json={**BODY, 'callback_url': url})
     assert resp.status == 400
     assert not store.messages and queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_valid_until_and_keep_text_are_stored(http):
+    client, _, store = http
+    body = {**BODY, 'valid_until': '2026-10-01T12:00:00+02:00', 'keep_text': False}
+    resp = await client.post('/api/v1/sms/send', json=body)
+    assert resp.status == 200
+    message = store.messages[(await resp.json())['message_id']]
+    assert message.valid_until == datetime(2026, 10, 1, 10, tzinfo=timezone.utc)
+    assert message.valid_until.utcoffset().total_seconds() == 0  # stored in UTC
+    assert message.keep_text is False
+
+
+@pytest.mark.asyncio
+async def test_validity_and_keep_text_default_to_none_and_kept(http):
+    client, _, store = http
+    message = store.messages[await submit(client)]
+    assert (message.valid_until, message.keep_text) == (None, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'field, value',
+    [
+        ('valid_until', '2026-10-01T10:00:00'),  # naive
+        ('valid_until', 'soon'),
+        ('valid_until', 5),
+        ('valid_until', '9999-12-31T23:59:59-05:00'),  # past the last UTC datetime
+        ('valid_until', '0001-01-01T00:00:00+14:00'),  # before the first
+        ('valid_until', '0001-01-01T00:00:00Z'),  # PostgreSQL's -infinity
+        ('valid_until', '1999-12-31T23:59:59Z'),
+        ('valid_until', '2100-01-01T00:00:00Z'),  # submit_sm's year wraps to 2000
+        ('valid_until', '2099-12-31T23:00:00-05:00'),  # 2100 in UTC
+        ('keep_text', 'no'),
+        ('keep_text', 0),
+    ],
+)
+async def test_bad_validity_or_keep_text_is_rejected(http, field, value):
+    client, queue, store = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, field: value})
+    assert resp.status == 400
+    assert field in (await resp.json())['details']
+    assert queue.empty()
+    assert store.messages == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('sent', ['2000-01-01T00:00:00Z', '2099-12-31T23:59:59Z'])
+async def test_valid_until_at_either_end_of_the_range_is_taken(http, sent):
+    client, _, store = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'valid_until': sent})
+    assert resp.status == 200
+    stored = store.messages[(await resp.json())['message_id']].valid_until
+    assert stored == datetime.fromisoformat(sent)

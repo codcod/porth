@@ -69,6 +69,8 @@ async def test_add_get_round_trips_every_column(db):
         dlr_url='http://x/?d=%d',
         smsc='op-a',
         priority='high',
+        valid_until=now + timedelta(minutes=5),
+        keep_text=False,
     )
     await add(engine, message)
     async with SqlAlchemyUnitOfWork(engine) as uow:
@@ -103,6 +105,31 @@ async def test_update_writes_the_status_fields(db):
         await uow.commit()
     async with SqlAlchemyUnitOfWork(engine) as uow:
         assert await uow.messages.get(message.message_id) == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'keep_text, status, text',
+    [
+        (False, MessageStatus.SENT, ''),
+        (False, MessageStatus.EXPIRED, ''),
+        (False, MessageStatus.QUEUED, 'hi'),  # a retry still needs it
+        (True, MessageStatus.SENT, 'hi'),
+    ],
+)
+async def test_update_blanks_text_not_kept_once_sent_or_final(
+    db, keep_text, status, text
+):
+    engine, ids = db
+    message = new(ids, keep_text=keep_text)
+    await add(engine, message)
+    message.status = status
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.update(message)
+        await uow.commit()
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        assert (await uow.messages.get(message.message_id)).message_text == text
+    assert message.message_text == 'hi'
 
 
 @pytest.mark.asyncio
