@@ -23,7 +23,8 @@ _FINISHED = (
 class AbstractMessageRepository(AbstractRepository[SMSMessage]):
     @abc.abstractmethod
     async def update(self, message: SMSMessage) -> None:
-        """Write status, retry_count, sent_at, delivered_at, protocol_data and smsc."""
+        """Write status, retry_count, sent_at, delivered_at, protocol_data and smsc;
+        blank the text of a keep_text=False message once it is sent or final."""
 
     @abc.abstractmethod
     async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:
@@ -84,17 +85,21 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
 
     @tp.override
     async def update(self, message: SMSMessage) -> None:
+        values: dict[str, tp.Any] = dict(
+            status=message.status.value,
+            retry_count=message.retry_count,
+            sent_at=message.sent_at,
+            delivered_at=message.delivered_at,
+            protocol_data=message.protocol_data,
+            smsc=message.smsc,
+        )
+        # Not kept once nothing will send it again (design.md §4.1); NOT NULL, so ''
+        if not message.keep_text and message.status.value not in _UNSENT:
+            values['message_text'] = ''
         await self.connection.execute(
             sa.update(messages)
             .where(messages.c.message_id == message.message_id)
-            .values(
-                status=message.status.value,
-                retry_count=message.retry_count,
-                sent_at=message.sent_at,
-                delivered_at=message.delivered_at,
-                protocol_data=message.protocol_data,
-                smsc=message.smsc,
-            )
+            .values(values)
         )
 
     @tp.override

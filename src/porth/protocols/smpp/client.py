@@ -18,6 +18,7 @@ from smpp import (
 from smpp import SMPPClient as SmppaiClient
 from smpp.exceptions import SMPPException, SMPPPDUException
 from smpp.gsm import make_parts
+from smpp.utils import format_smpp_time
 
 from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
@@ -190,6 +191,10 @@ class SMPPClient:
                 source_addr_npi=source.npi,
                 dest_addr_ton=destination.ton,
                 dest_addr_npi=destination.npi,
+                # the SMSC drops it past then too (design.md §4.2); '': its default
+                validity_period=format_smpp_time(message.valid_until.timestamp())
+                if message.valid_until
+                else '',
             )
         except Exception as e:
             logger.error(f'SMSC {self.name}: Failed to send message via SMPP: {e}')

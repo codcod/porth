@@ -2,7 +2,7 @@
 
 import logging
 import typing as tp
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from aiohttp import web, web_request, web_response
@@ -57,6 +57,8 @@ _FIELDS = frozenset(
         'message_text',
         'priority',
         'callback_url',
+        'valid_until',
+        'keep_text',
     }
 )
 
@@ -94,6 +96,26 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             if not parts or parts.scheme not in ('http', 'https') or not parts.hostname:
                 raise ValueError('callback_url must be an http(s) URL with a host')
 
+        # RFC 3339 with an offset; one already past is taken, and expires unsent
+        valid_until = data.get('valid_until')
+        if valid_until is not None:
+            try:
+                valid_until = datetime.fromisoformat(valid_until)
+            except (TypeError, ValueError):
+                raise ValueError('valid_until must be an RFC 3339 time') from None
+            if valid_until.tzinfo is None:
+                raise ValueError('valid_until must carry a UTC offset')
+            # In UTC, as stored; submit_sm's absolute time has a two-digit year
+            try:
+                valid_until = valid_until.astimezone(timezone.utc)
+            except OverflowError:
+                valid_until = None
+            if valid_until is None or not 2000 <= valid_until.year < 2100:
+                raise ValueError('valid_until must fall in 2000 to 2099 in UTC')
+        keep_text = data.get('keep_text', True)
+        if not isinstance(keep_text, bool):
+            raise ValueError('keep_text must be true or false')
+
         # Support both field naming conventions
         message = SMSMessage(
             source_addr=text_field(data, 'from_number', 'source_addr'),
@@ -107,6 +129,8 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             status=MessageStatus.QUEUED,
             priority=priority,
             callback_url=callback_url,
+            valid_until=valid_until,
+            keep_text=keep_text,
         )
         # NoRoute is a 400 like any other rejection
         message.smsc = request.app['main_app']['router'].route(message.destination_addr)

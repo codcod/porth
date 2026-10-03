@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from smpp import CommandStatus
@@ -266,3 +267,57 @@ async def test_engine_failed_sends_no_kannel_dlr_url(monkeypatch):
     assert engine.stored(message).status == MessageStatus.FAILED
     assert engine.uow_factory.repo.dlr_callbacks == {}
     assert calls == [None]
+
+
+def hours(n: float) -> datetime:
+    return datetime.now(timezone.utc) + timedelta(hours=n)
+
+
+@pytest.mark.asyncio
+async def test_lapsed_message_expires_unsent_with_its_rest_callback(monkeypatch):
+    handler = CountingHandler()
+    engine, message = make(handler, valid_until=hours(-1), callback_url='http://m/cb')
+    calls = dispatched(engine, monkeypatch)
+    await engine._process_message(message)
+    assert handler.sends == 0
+    assert engine.stored(message).status == MessageStatus.EXPIRED
+    ((message_id, (url, body)),) = engine.uow_factory.repo.dlr_callbacks.items()
+    assert body['status'] == 'expired'
+    assert calls == [(message_id, url, body)]
+
+
+@pytest.mark.asyncio
+async def test_message_lapsing_in_backoff_expires_on_the_retry(monkeypatch):
+    engine, message = make(FakeHandler(OSError('reset')), valid_until=hours(1))
+    await engine._process_message(message)
+    assert message.status == MessageStatus.QUEUED
+
+    class Later(datetime):  # the backoff outlasted valid_until
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(hours=2)
+
+    monkeypatch.setattr(delivery_module, 'datetime', Later)
+    engine.smpp_client = handler = CountingHandler()
+    await engine._process_message(message)
+    assert handler.sends == 0
+    assert engine.stored(message).status == MessageStatus.EXPIRED
+
+
+@pytest.mark.asyncio
+async def test_message_still_valid_is_sent():
+    engine, message = make(CountingHandler(), valid_until=hours(1))
+    await engine._process_message(message)
+    assert engine.smpp_client.sends == 1
+    assert engine.stored(message).status == MessageStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_text_not_kept_is_blanked_once_sent_not_while_retrying():
+    engine, message = make(FakeHandler(OSError('reset')), keep_text=False)
+    await engine._process_message(message)
+    assert engine.stored(message).message_text == 'hi'  # queued: a retry needs it
+    engine.smpp_client = FakeHandler()
+    await engine._process_message(message)
+    assert engine.stored(message).message_text == ''
+    assert message.message_text == 'hi'  # only the stored copy is blanked

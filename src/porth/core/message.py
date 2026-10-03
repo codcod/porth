@@ -57,3 +57,8 @@ class SMSMessage:
     dlr_url: tp.Optional[str] = None
     # REST: POSTed the final status (design.md §4.1)
     callback_url: tp.Optional[str] = None
+
+    # REST: unsent at this time, it expires instead (design.md §4.2)
+    valid_until: tp.Optional[datetime] = None
+    # REST: False blanks the stored text once the message is final or sent (design.md §4.1)
+    keep_text: bool = True

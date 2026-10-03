@@ -36,6 +36,9 @@ class FakeMessageRepository(AbstractMessageRepository):
         for field in ('status', 'retry_count', 'sent_at', 'delivered_at', 'smsc'):
             setattr(stored, field, getattr(message, field))
         stored.protocol_data = copy.deepcopy(message.protocol_data)
+        unsent = (MessageStatus.PENDING, MessageStatus.QUEUED)
+        if not message.keep_text and message.status not in unsent:
+            stored.message_text = ''
 
     @tp.override
     async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:

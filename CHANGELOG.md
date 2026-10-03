@@ -64,6 +64,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   deleted `store.retention_days` (default 7) after it was accepted, once any status call it
   is owed has been made, and its status poll then answers `404`. Both are checked once a
   minute (POR-003).
+- An optional `valid_until` (RFC 3339 with an offset, in 2000 to 2099 in UTC) on
+  `POST /api/v1/sms/send`. A message still unsent at that time, checked before every send and
+  retry, becomes `expired` and is never sent, and its `callback_url` gets that status. The
+  SMSC gets it as the `submit_sm` `validity_period`. An optional `keep_text: false` blanks
+  the stored text once the message is `sent`, `failed` or `expired` (POR-027).
 
 **Changed**
 

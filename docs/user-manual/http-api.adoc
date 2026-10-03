@@ -16,11 +16,21 @@ The API has no authentication. See <<Introduction>>.
 | `priority` | no | `high` or `normal` (the default). See below.
 | `callback_url` | no | An `http` or `https` URL with a host. {product} posts the message's
 final status to it. See <<Status callback>>.
+| `valid_until` | no | An RFC 3339 time with an offset, such as `2026-10-01T12:00:00Z` or
+`2026-10-01T14:00:00+02:00`, in 2000 to 2099 in UTC. A message not yet sent by then
+expires instead. See below.
+| `keep_text` | no | `true` (the default) or `false`. With `false`, {product} blanks the
+stored text once the message is `sent`, `failed` or `expired`. See below.
 |===
 
-A body with any other field, a `priority` other than `high` or `normal`, or a `callback_url`
-that is not an `http` or `https` URL with a host, is rejected with `400`. A Kannel-style
-`dlr_url` is an unknown field too, so use `callback_url` instead.
+These bodies are rejected with `400`:
+
+* one with any other field. A Kannel-style `dlr_url` is an unknown field too, so use
+  `callback_url` instead.
+* a `priority` other than `high` or `normal`.
+* a `callback_url` that is not an `http` or `https` URL with a host.
+* a `valid_until` that is not a time, has no offset, or is outside 2000 to 2099 in UTC.
+* a `keep_text` that is not `true` or `false`.
 
 A `high` message leaves its SMSC's queue before every `normal` message waiting there, after a
 restart too. Within a level, messages leave in the order they were accepted. Priority orders
@@ -28,6 +38,18 @@ only the queue of the SMSC the message is routed to, never another SMSC's. It do
 the throughput cap (see <<Throughput cap>>) or interrupt a send already under way, and a
 retried message goes to the back of its level. A steady stream of `high` messages holds
 `normal` ones back, so keep `high` for traffic that cannot wait, such as login codes.
+
+A message still unsent at its `valid_until` becomes `expired` and is never sent. {product}
+checks before each send and each retry, so a message whose `valid_until` passes while it
+waits for a retry, a down SMSC's included, expires instead of being sent. It becomes `expired`
+when that retry comes due, not at `valid_until` itself. Each failed attempt still counts
+towards `delivery.max_retries`, so a message whose retries run out first ends `failed`. A
+`valid_until` already past is accepted, and the message expires at its first send. The SMSC is told the same time as the `submit_sm` validity period, so it drops a
+message it still holds by then. A message with a `callback_url` gets `expired` posted to it.
+
+With `keep_text: false`, the stored text is blanked (set to an empty string) once the message
+is `sent`, `failed` or `expired`. Until then it is kept, since a retry or a restart needs it.
+Use it for text that must not be kept, such as login codes. {product} logs no message text.
 
 [source,bash]
 ----
@@ -69,7 +91,8 @@ status, so the client need not poll. The body is JSON:
 
 * Every final status is reported, whatever set it: a delivery receipt, a send {product}
   gave up on (the SMSC rejected it, or every retry failed), at startup too, or no receipt
-  within `store.dlr_timeout_hours` (`expired`). See <<Message delivery>>.
+  within `store.dlr_timeout_hours` or a `valid_until` reached before sending (`expired`).
+  See <<Message delivery>>.
 * The URL has no escape codes, unlike a Kannel `dlr-url`: {product} adds nothing to it. The
   HTTP client may normalise its percent-encoding (`%41` is sent as `A`, a stray `%` as `%25`),
   which servers read the same way.

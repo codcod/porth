@@ -4,6 +4,8 @@
 
 . The API validates the request, builds a message, and queues it. The message is `queued`,
   and its status can be polled from now on.
+. A REST message past its `valid_until` becomes `expired` instead of being sent, checked
+  each time a delivery worker takes it, a retry included. See <<Send a message>>.
 . A delivery worker takes the message and sends it to the SMSC as one `submit_sm` per part.
   Text that fits one SMS is one part.
 . When the SMSC accepts every part, the message becomes `sent`, and {product} records the

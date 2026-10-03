@@ -135,6 +135,16 @@ class DeliveryEngine:
 
     async def _process_message(self, message: SMSMessage) -> None:
         """Process a single message."""
+        # Every attempt, a retry included, comes through here (design.md §4.2)
+        if message.valid_until and datetime.now(timezone.utc) >= message.valid_until:
+            logger.info(
+                f'Message {message.message_id} expired before sending '
+                f'(valid until {message.valid_until.isoformat()})'
+            )
+            message.status = MessageStatus.EXPIRED
+            await self._finalize(message)
+            return
+
         try:
             logger.info(f'Processing message {message.message_id}')
 
