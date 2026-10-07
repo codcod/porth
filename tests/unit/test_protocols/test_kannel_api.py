@@ -1,20 +1,24 @@
 """Unit tests for the Kannel-compatible sendsms endpoint."""
 
+import logging
+
 import pytest
 import pytest_asyncio
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from sqlalchemy.exc import SQLAlchemyError
 
+from porth.config.settings import KannelUser
 from porth.core.message import MessageStatus
-from porth.protocols.kannel.api import create_kannel_app
+from porth.protocols.kannel.api import KannelAccessLogger, create_kannel_app
 from tests.unit.test_protocols.test_http_api import ROUTER, RecordingQueue
 
 PARAMS = {'to': '+306900000000', 'from': 'porth', 'text': 'hi'}
 
 
-def app_for(uow_factory, default_sender=None):
+def app_for(uow_factory, default_sender=None, users=None):
     queues = {'a': RecordingQueue(uow_factory), 'b': RecordingQueue(uow_factory)}
-    return create_kannel_app(queues, ROUTER, uow_factory, default_sender)
+    return create_kannel_app(queues, ROUTER, uow_factory, default_sender, users)
 
 
 @pytest_asyncio.fixture
@@ -214,3 +218,86 @@ async def test_smsc_overrides_the_prefix_and_empty_is_absent(
     assert resp.status == 200
     message = await client.app['queues'][expected].get()
     assert uow_factory.repo.messages[message.message_id].smsc == expected
+
+
+AUTH_FAILED = 'Authorization failed for sendsms'
+CREDS = {'username': 'u', 'password': 'p'}
+
+
+@pytest_asyncio.fixture
+async def authed(uow_factory, request):
+    allow_ip = getattr(request, 'param', [])
+    app = app_for(uow_factory, users={'u': KannelUser(password='p', allow_ip=allow_ip)})
+    # main.py's access logger, so no log the test sees can hold a password
+    server = TestServer(app)
+    await server.start_server(access_log_class=KannelAccessLogger)
+    async with TestClient(server) as client:
+        yield client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'creds', [CREDS, {'user': 'u', 'pass': 'p'}], ids=['username', 'user-alias']
+)
+async def test_right_credentials_are_accepted(authed, creds):
+    resp = await authed.get('/cgi-bin/sendsms', params={**PARAMS, **creds})
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'params',
+    [
+        {**PARAMS, 'username': 'u', 'password': 'wrong'},
+        {**PARAMS, 'username': 'x', 'password': 'p'},
+        {**PARAMS, 'username': 'u'},
+        PARAMS,
+        {'username': 'u', 'password': 'wrong'},  # no to: still 403, auth runs first
+    ],
+    ids=['wrong-password', 'unknown-user', 'no-password', 'no-credentials', 'no-to'],
+)
+async def test_bad_credentials_are_kannels_403(authed, uow_factory, caplog, params):
+    resp = await authed.get('/cgi-bin/sendsms', params=params)
+    assert resp.status == 403
+    assert await resp.text() == AUTH_FAILED
+    assert authed.app['queues']['a'].empty() and authed.app['queues']['b'].empty()
+    assert uow_factory.repo.messages == {}
+    assert 'wrong' not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_rejection_logs_the_username_not_the_password(authed, caplog):
+    params = {**PARAMS, 'username': 'u', 'password': 's3cret'}
+    await authed.get('/cgi-bin/sendsms', params=params)
+    assert "'u'" in caplog.text and 's3cret' not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('authed', [['127.0.0.0/8']], indirect=True)
+async def test_caller_inside_allow_ip_is_accepted(authed):
+    resp = await authed.get('/cgi-bin/sendsms', params={**PARAMS, **CREDS})
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('authed', [['10.0.0.0/8']], indirect=True)
+@pytest.mark.parametrize('headers', [{}, {'X-Forwarded-For': '10.1.2.3'}])
+async def test_caller_outside_allow_ip_is_rejected(authed, uow_factory, headers):
+    resp = await authed.get(
+        '/cgi-bin/sendsms', params={**PARAMS, **CREDS}, headers=headers
+    )
+    assert resp.status == 403
+    assert await resp.text() == AUTH_FAILED
+    assert uow_factory.repo.messages == {}
+
+
+def test_no_users_warns_that_sendsms_is_open(uow_factory, caplog):
+    app_for(uow_factory)
+    assert 'sendsms accepts any caller' in caplog.text
+
+
+def test_access_log_leaves_out_the_query_string(caplog):
+    caplog.set_level(logging.INFO, logger='t')
+    request = make_mocked_request('GET', '/cgi-bin/sendsms?username=u&password=s3cret')
+    KannelAccessLogger(logging.getLogger('t'), '').log(request, web.Response(), 0.0)
+    assert '/cgi-bin/sendsms' in caplog.text and 's3cret' not in caplog.text

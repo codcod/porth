@@ -8,7 +8,10 @@ The ticket reference identifies the planned change.
 | Area | Current behaviour | Planned
 
 | Kannel-compatible `sendsms` API | `GET` only. Parameters beyond `to`, `from`, `text`,
-`dlr-url`, `dlr-mask` and `smsc` are ignored. Response codes are not yet Kannel's exact table. | POR-005
+`dlr-url`, `dlr-mask`, `smsc` and the credentials are ignored. Response codes are not yet Kannel's exact table. | POR-005
+| Security | No TLS: the Kannel API's credentials travel in clear over HTTP, and an
+`allow_ip` list is no substitute for a trusted network. The REST API has no authentication.
+| —
 | SMSC routing | Kannel's `unified-prefix` and per-SMSC `allowed-prefix`, `denied-prefix`
 and `preferred-prefix` lists are not supported. Rewrite the rules as one prefix table (see
 <<Routing rules>>). | —

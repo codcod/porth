@@ -23,7 +23,7 @@ from porth.core.queue import MessageQueue
 from porth.core.routing import Router
 from porth.core.sweep import Sweeper
 from porth.protocols.http.api import create_http_app
-from porth.protocols.kannel.api import create_kannel_app
+from porth.protocols.kannel.api import KannelAccessLogger, create_kannel_app
 from porth.protocols.smpp.client import SMPPClient
 from porth.service_layer.unit_of_work import AbstractUnitOfWork, SqlAlchemyUnitOfWork
 
@@ -112,8 +112,10 @@ class SMSGateway:
                 self.router,
                 self.uow_factory,
                 default_sender=self.settings.kannel.default_sender,
+                users=self.settings.kannel.users,
             ),
             self.settings.kannel,
+            access_log_class=KannelAccessLogger,  # no query string: it holds passwords
         )
 
         for engine in self.engines.values():
@@ -149,8 +151,13 @@ class SMSGateway:
                 await uow.messages.update(message)
             await uow.commit()
 
-    async def _serve(self, app: web.Application, config: HTTPConfig | KannelConfig):
-        runner = web.AppRunner(app)
+    async def _serve(
+        self,
+        app: web.Application,
+        config: HTTPConfig | KannelConfig,
+        **runner_kwargs: tp.Any,
+    ):
+        runner = web.AppRunner(app, **runner_kwargs)
         await runner.setup()
         self.servers.append(runner)  # before the bind, so stop() cleans up a failed one
         await web.TCPSite(runner, config.host, config.port).start()

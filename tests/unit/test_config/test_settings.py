@@ -132,6 +132,14 @@ def test_unknown_key_raises_naming_it(tmp_path, text, key):
         ('[porth.mo]\nreply = "yes"\n', 'porth.mo.reply'),
         ('[porth.kannel]\ndefault_sender = 12345\n', 'porth.kannel.default_sender'),
         ('[porth]\nhttp = 1\n', 'porth.http'),
+        (
+            '[porth.kannel.users.u]\npassword = "p"\nallow_ip = "x"\n',
+            'porth.kannel.users.u.allow_ip',
+        ),
+        (
+            '[porth.kannel.users.u]\npassword = "p"\nallow_ip = [1]\n',
+            r'porth.kannel.users.u.allow_ip\[0\]',
+        ),
     ],
 )
 def test_wrong_type_raises_naming_key(tmp_path, text, key):
@@ -142,6 +150,29 @@ def test_wrong_type_raises_naming_key(tmp_path, text, key):
 def test_missing_required_key_raises_naming_it(tmp_path):
     text = '[porth.smsc.a]\nsystem_id = "p"\npassword = "s"\n'
     with pytest.raises(ValueError, match='porth.smsc.a.host is required'):
+        load(tmp_path, text)
+
+
+def test_kannel_users_load(tmp_path):
+    text = (
+        '[porth.kannel.users.u]\npassword = "p"\nallow_ip = ["10.0.0.0/8", "::1"]\n'
+        '[porth.kannel.users.v]\npassword = "q"\n'
+    )
+    users = load(tmp_path, text).kannel.users
+    assert (users['u'].password, users['u'].allow_ip) == ('p', ['10.0.0.0/8', '::1'])
+    assert (users['v'].password, users['v'].allow_ip) == ('q', [])
+    assert load(tmp_path, '[porth]\n').kannel.users == {}
+
+
+def test_kannel_user_without_password_raises(tmp_path):
+    with pytest.raises(ValueError, match='porth.kannel.users.u.password is required'):
+        load(tmp_path, '[porth.kannel.users.u]\nallow_ip = []\n')
+
+
+@pytest.mark.parametrize('entry', ['10.0.0.1/8', 'nope'])
+def test_invalid_allow_ip_raises(tmp_path, entry):
+    text = f'[porth.kannel.users.u]\npassword = "p"\nallow_ip = ["{entry}"]\n'
+    with pytest.raises(ValueError, match='invalid porth.kannel.users.u.allow_ip'):
         load(tmp_path, text)
 
 
