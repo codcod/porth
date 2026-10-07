@@ -1,6 +1,7 @@
 """Unit tests for the SMPP client (smppai faked)."""
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -101,6 +102,17 @@ async def test_addresses_carry_smppai_ton_npi(smpp):
     assert (submit['source_addr'], submit['source_addr_ton']) == ('ACME', 5)
     assert submit['destination_addr'] == '48600100200'
     assert (submit['dest_addr_ton'], submit['dest_addr_npi']) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_valid_until_is_the_absolute_utc_validity_period(smpp):
+    message = msg('hi')
+    message.valid_until = datetime.fromisoformat('2026-10-01T12:00:00+02:00')
+    await smpp.send_message(message)
+    await smpp.send_message(msg('hi'))
+    with_validity, without = FakeSmppai.instances[0].submits
+    assert with_validity['validity_period'] == '261001100000000+'
+    assert without['validity_period'] == ''  # the SMSC's default
 
 
 @pytest.mark.asyncio

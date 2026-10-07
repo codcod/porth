@@ -26,6 +26,8 @@ messages = sa.Table(
     sa.Column('smsc', sa.Text(), nullable=True),  # null: stored before routing
     sa.Column('priority', sa.Text(), nullable=False, server_default='normal'),
     sa.Column('callback_url', sa.Text(), nullable=True),
+    sa.Column('valid_until', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('keep_text', sa.Boolean(), nullable=False, server_default=sa.true()),
     sa.CheckConstraint(
         "status IN ('pending','queued','sent','delivered','failed','expired')",
         name='messages_status_check',
