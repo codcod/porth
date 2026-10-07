@@ -71,6 +71,7 @@ async def test_add_get_round_trips_every_column(db):
         priority='high',
         valid_until=now + timedelta(minutes=5),
         keep_text=False,
+        idempotency_key='k-1',
     )
     await add(engine, message)
     async with SqlAlchemyUnitOfWork(engine) as uow:
@@ -363,3 +364,15 @@ async def test_evict_deletes_finished_before_cutoff_with_their_smsc_ids(db):
         await uow.messages.delete_callback(owed)
         assert await uow.messages.evict(CUTOFF, 10) == 1
         await uow.commit()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_unique_and_found(db):
+    engine, ids = db
+    first = new(ids, idempotency_key='k-2')
+    await add(engine, first, new(ids), new(ids))  # no key: NULLs never collide
+    with pytest.raises(IntegrityError, match='messages_idempotency_key_key'):
+        await add(engine, new(ids, idempotency_key='k-2'))
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        assert await uow.messages.get_by_idempotency_key('k-2') == first
+        assert await uow.messages.get_by_idempotency_key('k-none') is None

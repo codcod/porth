@@ -28,12 +28,15 @@ messages = sa.Table(
     sa.Column('callback_url', sa.Text(), nullable=True),
     sa.Column('valid_until', sa.DateTime(timezone=True), nullable=True),
     sa.Column('keep_text', sa.Boolean(), nullable=False, server_default=sa.true()),
+    sa.Column('idempotency_key', sa.Text(), nullable=True),
     sa.CheckConstraint(
         "status IN ('pending','queued','sent','delivered','failed','expired')",
         name='messages_status_check',
     ),
     sa.CheckConstraint("protocol IN ('http','kannel')", name='messages_protocol_check'),
     sa.CheckConstraint("priority IN ('normal','high')", name='messages_priority_check'),
+    # NULLs never collide: a message without a key is unconstrained
+    sa.UniqueConstraint('idempotency_key', name='messages_idempotency_key_key'),
 )
 
 # The receipt lookup index: (SMSC, its message id) -> the latest message that got it

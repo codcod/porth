@@ -294,8 +294,11 @@ def _kind(body: tp.Optional[dict[str, tp.Any]]) -> str:
 
 def _rest_body(message: SMSMessage, now: datetime) -> dict[str, tp.Any]:
     """The REST status callback's body (design.md §4.1); now is UTC."""
-    return {
+    body = {
         'message_id': message.message_id,
         'status': message.status.value,
         'occurred_at': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
+    if message.idempotency_key:
+        body['idempotency_key'] = message.idempotency_key
+    return body

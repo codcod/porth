@@ -22,6 +22,9 @@ _FINISHED = (
 
 class AbstractMessageRepository(AbstractRepository[SMSMessage]):
     @abc.abstractmethod
+    async def get_by_idempotency_key(self, key: str) -> SMSMessage | None: ...
+
+    @abc.abstractmethod
     async def update(self, message: SMSMessage) -> None:
         """Write status, retry_count, sent_at, delivered_at, protocol_data and smsc;
         blank the text of a keep_text=False message once it is sent or final."""
@@ -79,6 +82,14 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
     async def get(self, id: str) -> SMSMessage | None:
         result = await self.connection.execute(
             sa.select(messages).where(messages.c.message_id == id)
+        )
+        row = result.one_or_none()
+        return _message(row) if row else None
+
+    @tp.override
+    async def get_by_idempotency_key(self, key: str) -> SMSMessage | None:
+        result = await self.connection.execute(
+            sa.select(messages).where(messages.c.idempotency_key == key)
         )
         row = result.one_or_none()
         return _message(row) if row else None

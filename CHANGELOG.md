@@ -55,7 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - An optional `callback_url` (`http` or `https`, with a host; anything else is `400`) on
   `POST /api/v1/sms/send`. The message's final status (`delivered`, `failed` or `expired`,
   whatever set it: a receipt, a send given up on, or startup recovery) is `POST`ed there as
-  `{"message_id", "status", "occurred_at"}`. A non-2xx answer, a redirect included, is retried
+  `{"message_id", "status", "occurred_at"}`, plus `idempotency_key` when the submit carried
+  one (POR-028). A non-2xx answer, a redirect included, is retried
   up to 8 attempts over about 4 minutes, and a call cut short by a restart is made again at
   the next start. The Kannel `dlr-url` keeps its 3 attempts (POR-026).
 - A `sent` message with no final receipt `store.dlr_timeout_hours` (default 48) after it was
@@ -69,6 +70,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   retry, becomes `expired` and is never sent, and its `callback_url` gets that status. The
   SMSC gets it as the `submit_sm` `validity_period`. An optional `keep_text: false` blanks
   the stored text once the message is `sent`, `failed` or `expired` (POR-027).
+- An optional `idempotency_key` (1 to 64 characters, no NUL or lone surrogate) on
+  `POST /api/v1/sms/send`, unique while its message is stored. A repeat submit with the same
+  key, a concurrent one included, gets `200` with the first message's id and current status,
+  and nothing new is sent. The status callback echoes the key (POR-028).
 
 **Changed**
 
