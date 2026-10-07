@@ -21,6 +21,9 @@ final status to it. See <<Status callback>>.
 expires instead. See below.
 | `keep_text` | no | `true` (the default) or `false`. With `false`, {product} blanks the
 stored text once the message is `sent`, `failed` or `expired`. See below.
+| `idempotency_key` | no | A string of 1 to 64 characters, with no NUL and no lone
+surrogate, such as the client's request UUID. A repeat submit with the same key is answered
+with the first message. See below.
 |===
 
 These bodies are rejected with `400`:
@@ -31,6 +34,8 @@ These bodies are rejected with `400`:
 * a `callback_url` that is not an `http` or `https` URL with a host.
 * a `valid_until` that is not a time, has no offset, or is outside 2000 to 2099 in UTC.
 * a `keep_text` that is not `true` or `false`.
+* an `idempotency_key` that is not a string of 1 to 64 characters, or contains a NUL or a
+  lone surrogate (`\ud800` to `\udfff`).
 
 A `high` message leaves its SMSC's queue before every `normal` message waiting there, after a
 restart too. Within a level, messages leave in the order they were accepted. Priority orders
@@ -50,6 +55,21 @@ message it still holds by then. A message with a `callback_url` gets `expired` p
 With `keep_text: false`, the stored text is blanked (set to an empty string) once the message
 is `sent`, `failed` or `expired`. Until then it is kept, since a retry or a restart needs it.
 Use it for text that must not be kept, such as login codes. {product} logs no message text.
+
+A client that gets no answer to a submit cannot tell whether {product} took the message.
+With an `idempotency_key`, it can safely submit again. A submit with a key {product} already
+holds returns `200` with the first message's id and current status, and nothing new is sent:
+
+[source,json]
+----
+{"message_id": "3f1c…", "status": "sent", "message": "Message already accepted"}
+----
+
+The repeat's other fields are validated as usual, and otherwise ignored, even if they differ
+from the first submit's. Two submits with the same key at the same time get the same
+`message_id`, and one message is sent. A key
+lasts as long as its message, so for the retention window (see <<Lifecycle>>). After the
+message is deleted, a submit with its key is a new message.
 
 [source,bash]
 ----
@@ -77,7 +97,8 @@ status, so the client need not poll. The body is JSON:
 
 [source,json]
 ----
-{"message_id": "3f1c…", "status": "delivered", "occurred_at": "2026-09-26T10:39:12Z"}
+{"message_id": "3f1c…", "status": "delivered", "occurred_at": "2026-09-26T10:39:12Z",
+ "idempotency_key": "6b0e…"}
 ----
 
 [cols="1,4",options="header"]
@@ -87,6 +108,7 @@ status, so the client need not poll. The body is JSON:
 | `message_id` | The id the submit returned.
 | `status` | `delivered`, `failed` or `expired`. `sent` is not reported.
 | `occurred_at` | When {product} set the final status, in UTC, formatted `YYYY-MM-DDTHH:MM:SSZ`.
+| `idempotency_key` | The submit's `idempotency_key`. Present only if the submit had one.
 |===
 
 * Every final status is reported, whatever set it: a delivery receipt, a send {product}

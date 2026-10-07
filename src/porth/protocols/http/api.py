@@ -7,9 +7,10 @@ from urllib.parse import urlsplit
 
 from aiohttp import web, web_request, web_response
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from porth.config.settings import Settings
+from porth.core.exceptions import NoRoute
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
 from porth.core.routing import Router
@@ -59,6 +60,7 @@ _FIELDS = frozenset(
         'callback_url',
         'valid_until',
         'keep_text',
+        'idempotency_key',
     }
 )
 
@@ -115,6 +117,18 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
         keep_text = data.get('keep_text', True)
         if not isinstance(keep_text, bool):
             raise ValueError('keep_text must be true or false')
+        idempotency_key = data.get('idempotency_key')
+        if idempotency_key is not None and not (
+            isinstance(idempotency_key, str) and 0 < len(idempotency_key) <= 64
+        ):
+            raise ValueError('idempotency_key must be a string of 1 to 64 characters')
+        # PostgreSQL text holds neither: either would fail as a 503, retried forever
+        if idempotency_key is not None and any(
+            c == '\x00' or '\ud800' <= c <= '\udfff' for c in idempotency_key
+        ):
+            raise ValueError(
+                'idempotency_key must not contain a NUL or a lone surrogate'
+            )
 
         # Support both field naming conventions
         message = SMSMessage(
@@ -131,21 +145,32 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             callback_url=callback_url,
             valid_until=valid_until,
             keep_text=keep_text,
+            idempotency_key=idempotency_key,
         )
-        # NoRoute is a 400 like any other rejection
-        message.smsc = request.app['main_app']['router'].route(message.destination_addr)
     except Exception as e:
-        logger.error(f'Error sending SMS via HTTP API: {e}')
-        return web.json_response(
-            {'error': 'Failed to send SMS', 'details': str(e)}, status=400
-        )
+        return _rejected(e)
 
-    # Durable before it is accepted (design.md §4.6), so a restart still sends it
     main_app = request.app['main_app']
     try:
-        async with main_app['uow_factory']() as uow:
-            await uow.messages.add(message)
-            await uow.commit()
+        # Before routing, so a repeat is answered even if the routing has changed
+        if idempotency_key and (first := await _by_key(main_app, idempotency_key)):
+            return _repeat(first)
+        message.smsc = main_app['router'].route(message.destination_addr)
+        # Durable before it is accepted (design.md §4.6), so a restart still sends it
+        try:
+            async with main_app['uow_factory']() as uow:
+                await uow.messages.add(message)
+                await uow.commit()
+        except IntegrityError as e:
+            # A concurrent submit with the same key committed first
+            first = None
+            if idempotency_key and 'messages_idempotency_key_key' in str(e.orig):
+                first = await _by_key(main_app, idempotency_key)
+            if first is None:
+                raise
+            return _repeat(first)
+    except NoRoute as e:
+        return _rejected(e)
     except (SQLAlchemyError, OSError) as e:  # OSError: database unreachable
         logger.error(f'HTTP API: message not stored, so not accepted: {e!r}')
         return web.json_response(
@@ -160,6 +185,32 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             'message_id': message.message_id,
             'status': 'queued',
             'message': 'Message queued for delivery',
+        },
+        status=200,
+    )
+
+
+def _rejected(e: Exception) -> web_response.Response:
+    logger.error(f'Error sending SMS via HTTP API: {e}')
+    return web.json_response(
+        {'error': 'Failed to send SMS', 'details': str(e)}, status=400
+    )
+
+
+async def _by_key(main_app: web.Application, key: str) -> SMSMessage | None:
+    # A fresh unit of work: after a failed insert the old transaction is aborted
+    uow_factory: tp.Callable[[], AbstractUnitOfWork] = main_app['uow_factory']
+    async with uow_factory() as uow:
+        return await uow.messages.get_by_idempotency_key(key)
+
+
+def _repeat(first: SMSMessage) -> web_response.Response:
+    """A repeat submit's answer: the first message, nothing new sent (design.md §4.1)."""
+    return web.json_response(
+        {
+            'message_id': first.message_id,
+            'status': first.status.value,
+            'message': 'Message already accepted',
         },
         status=200,
     )

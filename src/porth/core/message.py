@@ -62,3 +62,5 @@ class SMSMessage:
     valid_until: tp.Optional[datetime] = None
     # REST: False blanks the stored text once the message is final or sent (design.md §4.1)
     keep_text: bool = True
+    # REST: a repeat submit with it is answered with this message (design.md §4.1)
+    idempotency_key: tp.Optional[str] = None

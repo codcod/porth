@@ -21,7 +21,15 @@ def receipt(smsc_id, state, text='id:x stat:DELIVRD'):
     )
 
 
-def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0, callback_url=None):
+def sent(
+    repo,
+    ids,
+    protocol='http',
+    dlr_url=None,
+    dlr_mask=0,
+    callback_url=None,
+    idempotency_key=None,
+):
     """A sent message in the repository; returns a reader of its stored row."""
     message = SMSMessage(
         source_addr='A',
@@ -30,6 +38,7 @@ def sent(repo, ids, protocol='http', dlr_url=None, dlr_mask=0, callback_url=None
         protocol=protocol,
         dlr_url=dlr_url,
         callback_url=callback_url,
+        idempotency_key=idempotency_key,
         protocol_data={'dlr_mask': dlr_mask, 'smsc_message_ids': ids},
         status=MessageStatus.SENT,
         smsc='a',
@@ -389,6 +398,14 @@ async def test_rest_final_status_is_posted(store, handler, recorder, state, stat
     assert (body['message_id'], body['status']) == (message().message_id, status)
     assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', body['occurred_at'])
     assert store.dlr_callbacks == {}  # the 2xx forgot it
+
+
+@pytest.mark.asyncio
+async def test_rest_final_status_echoes_the_idempotency_key(store, handler, recorder):
+    sent(store, ['s1'], callback_url=rest_url(recorder), idempotency_key='k-1')
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    assert recorder.bodies[0]['idempotency_key'] == 'k-1'
 
 
 @pytest.mark.asyncio

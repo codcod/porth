@@ -258,3 +258,102 @@ async def test_valid_until_at_either_end_of_the_range_is_taken(http, sent):
     assert resp.status == 200
     stored = store.messages[(await resp.json())['message_id']].valid_until
     assert stored == datetime.fromisoformat(sent)
+
+
+@pytest.mark.asyncio
+async def test_repeat_key_answers_the_first_message_and_queues_nothing(http):
+    client, queue, store = http
+    keyed = {**BODY, 'idempotency_key': 'k-1'}
+    first = await (await client.post('/api/v1/sms/send', json=keyed)).json()
+    store.messages[first['message_id']].status = MessageStatus.SENT
+    resp = await client.post(
+        '/api/v1/sms/send', json={**keyed, 'destination_addr': '+306911111111'}
+    )
+    assert resp.status == 200
+    assert await resp.json() == {
+        'message_id': first['message_id'],
+        'status': 'sent',
+        'message': 'Message already accepted',
+    }
+    assert queue.qsize() == 1
+    assert len(store.messages) == 1
+    assert store.messages[first['message_id']].idempotency_key == 'k-1'
+
+
+@pytest.mark.asyncio
+async def test_repeat_key_is_answered_even_when_it_no_longer_routes(http):
+    client, _, store = http
+    keyed = {**BODY, 'idempotency_key': 'k-1'}
+    first = await (await client.post('/api/v1/sms/send', json=keyed)).json()
+    resp = await client.post(
+        '/api/v1/sms/send', json={**keyed, 'destination_addr': '15550000001'}
+    )
+    assert resp.status == 200
+    assert (await resp.json())['message_id'] == first['message_id']
+
+
+@pytest.mark.asyncio
+async def test_different_keys_queue_separate_messages(http):
+    client, queue, store = http
+    for key in ('k-1', 'k-2'):
+        resp = await client.post(
+            '/api/v1/sms/send', json={**BODY, 'idempotency_key': key}
+        )
+        assert resp.status == 200
+    assert queue.qsize() == 2
+    assert len(store.messages) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('key', ['k' * 65, '', 5, 'a\x00b', 'a\ud800b'])
+async def test_bad_idempotency_key_is_rejected(http, key):
+    client, queue, store = http
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'idempotency_key': key})
+    assert resp.status == 400
+    assert 'idempotency_key' in (await resp.json())['details']
+    assert queue.empty()
+    assert store.messages == {}
+
+
+@pytest.mark.asyncio
+async def test_64_character_key_is_taken(http):
+    client, _, store = http
+    resp = await client.post(
+        '/api/v1/sms/send', json={**BODY, 'idempotency_key': 'k' * 64}
+    )
+    assert resp.status == 200
+    assert store.messages[(await resp.json())['message_id']].idempotency_key == 'k' * 64
+
+
+@pytest.mark.asyncio
+async def test_concurrent_repeat_hitting_the_constraint_is_a_repeat(http, monkeypatch):
+    client, queue, store = http
+    keyed = {**BODY, 'idempotency_key': 'k-1'}
+    first = await (await client.post('/api/v1/sms/send', json=keyed)).json()
+    lookup = store.get_by_idempotency_key
+    calls = []
+
+    async def misses_first(key):  # the other submit commits after this lookup
+        calls.append(key)
+        return None if len(calls) == 1 else await lookup(key)
+
+    monkeypatch.setattr(store, 'get_by_idempotency_key', misses_first)
+    resp = await client.post('/api/v1/sms/send', json=keyed)
+    assert resp.status == 200
+    assert (await resp.json())['message_id'] == first['message_id']
+    assert calls == ['k-1', 'k-1']
+    assert queue.qsize() == 1
+    assert len(store.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_key_lookup_is_503(http, monkeypatch):
+    client, queue, store = http
+
+    async def down(key):
+        raise SQLAlchemyError('database down')
+
+    monkeypatch.setattr(store, 'get_by_idempotency_key', down)
+    resp = await client.post('/api/v1/sms/send', json={**BODY, 'idempotency_key': 'k'})
+    assert resp.status == 503
+    assert queue.empty()

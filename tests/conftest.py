@@ -24,11 +24,21 @@ class FakeMessageRepository(AbstractMessageRepository):
     async def add(self, item: SMSMessage) -> None:
         if item.message_id in self.messages:
             raise IntegrityError('INSERT', None, Exception('duplicate message_id'))
+        keys = {m.idempotency_key for m in self.messages.values()}
+        if item.idempotency_key and item.idempotency_key in keys:
+            raise IntegrityError(
+                'INSERT', None, Exception('messages_idempotency_key_key')
+            )
         self.messages[item.message_id] = copy.deepcopy(item)
 
     @tp.override
     async def get(self, id: str) -> SMSMessage | None:
         return copy.deepcopy(self.messages.get(id))
+
+    @tp.override
+    async def get_by_idempotency_key(self, key: str) -> SMSMessage | None:
+        found = (m for m in self.messages.values() if m.idempotency_key == key)
+        return copy.deepcopy(next(found, None))
 
     @tp.override
     async def update(self, message: SMSMessage) -> None:
