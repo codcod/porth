@@ -15,6 +15,11 @@ host = "0.0.0.0"
 port = 13013
 # default_sender = "ACME"  # quoted: a bare number is not a string
 
+# sendsms users, one table each, named by the username; without any, sendsms is open.
+# [porth.kannel.users.acme]
+# password = "secret"
+# allow_ip = ["127.0.0.1", "10.0.0.0/8"]  # addresses or CIDR networks; unset = any
+
 [porth.delivery]
 max_retries = 3
 retry_delay = 5

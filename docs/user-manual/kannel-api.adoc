@@ -25,7 +25,9 @@ their sum. Without it, no callback is made.
 routing rules. Empty is the same as absent. Unlike Kannel, where it is a hint the routing
 rules can override, it always wins, and an SMSC that is not configured is an error. See
 <<Routing>>.
-| `username`, `password` | no | Accepted and ignored. The API has no authentication.
+| `username`, `password` | yes, once users are configured | The caller's credentials, checked
+against `[porth.kannel.users]`. `user` and `pass` are accepted in their place, as in Kannel.
+See <<Authentication>>.
 |===
 
 Any other parameter is ignored. Any other method returns `405`. See <<Limitations>>.
@@ -57,6 +59,31 @@ Not routable. Do not try again.
 `200` means the messages were queued, not sent. A `to` with no valid number, a missing `text`,
 or a missing `from` with no `kannel.default_sender` returns `400` with
 `3: Failed to send SMS: <reason>`.
+
+== Authentication
+
+Each `[porth.kannel.users.<username>]` table is one caller, the equivalent of a Kannel
+`sendsms-user` group. See <<Kannel users>>. A request must carry a configured `username` (else
+`user`) and its `password` (else `pass`), and come from an address in that user's `allow_ip`,
+if it has one. Otherwise {product} answers as Kannel does, `403` with the `text/plain` body:
+
+----
+Authorization failed for sendsms
+----
+
+The answer is the same whichever check failed, and nothing is queued. The check runs before
+any other, so a request with bad credentials and no `to` gets this `403`, not a `400`.
+
+* With no users configured, `sendsms` accepts any caller and {product} logs a warning at
+  startup. Kannel instead refuses every request without a `sendsms-user`.
+* The caller's address is the TCP peer. `X-Forwarded-For` is never read, so behind a proxy
+  `allow_ip` sees the proxy's address.
+* `allow_ip` takes addresses and CIDR networks, with no deny list and no `*` wildcards. Kannel's
+  usual `user-deny-ip = "*.*.*.*"` plus `user-allow-ip = "10.1.2.3;10.1.3.*"` becomes
+  `allow_ip = ["10.1.2.3", "10.1.3.0/24"]`.
+* Per-user `default-smsc` and `forced-smsc` are not supported.
+* The password is never logged. The Kannel listener's access log leaves out the query string.
+* Credentials travel in clear over HTTP. See <<Limitations>>.
 
 == Delivery reports
 

@@ -12,8 +12,8 @@ python -m porth.main /etc/porth/config.toml
 top-level tables in the file are ignored.
 
 There are no environment-variable overrides and no `.env` file. Secrets such as the SMSC
-password and the database DSN live in the file, so a production deployment mounts its own
-`config.toml`, as a secret, and passes its path.
+password, the Kannel users' passwords and the database DSN live in the file, so a production
+deployment mounts its own `config.toml`, as a secret, and passes its path.
 
 == Validation
 
@@ -24,6 +24,8 @@ password and the database DSN live in the file, so a production deployment mount
   `reply = "yes"` or an unquoted `default_sender = 12345`;
 * a required key is missing, such as `porth.smsc.op-a.host`;
 * a routing rule is not digits, or names an SMSC that is not configured;
+* a Kannel user's `allow_ip` entry is not an address or CIDR network, or has host bits set
+  (`10.0.0.1/8`), such as `invalid porth.kannel.users.acme.allow_ip: '10.0.0.1/8'`;
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
 * the file has no `[porth]` table.
@@ -45,6 +47,8 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's
 `global-sender`. A string: quote a numeric short code.
+| `kannel.users.<username>` | none | One `sendsms` caller per table. See <<Kannel users>>.
+Without any, `sendsms` is open.
 | `smsc.<name>` | none | One upstream SMSC per table, named by the table's key. See
 <<SMSCs>>. Without any, nothing routes and every submit is refused.
 | `routing.default` | unset | The SMSC for a number no prefix matches. See <<Routing rules>>.
@@ -89,6 +93,20 @@ operator's contracted rate. A concatenated message counts once per part. Unset: 
 At least `1`. See <<Throughput cap>>.
 |===
 
+== Kannel users
+
+Each `[porth.kannel.users.<username>]` table is one caller of the Kannel `sendsms` API, named
+by the table's key. See <<Authentication>>.
+
+[cols="2,1,4",options="header"]
+|===
+| Key | Default | Meaning
+
+| `password` | none | **Required.** The user's password.
+| `allow_ip` | empty | The addresses and CIDR networks the user may call from, such as
+`["127.0.0.1", "10.0.0.0/8"]`. Empty: any address.
+|===
+
 == Routing rules
 
 Each message goes out through one SMSC, chosen once when it is submitted:
@@ -120,6 +138,10 @@ port = 8080
 
 [porth.kannel]
 default_sender = "12345"
+
+[porth.kannel.users.acme]
+password = "secret-acme"
+allow_ip = ["10.0.0.0/8"]
 
 [porth.smsc.op-a]
 host = "smsc.op-a.example"

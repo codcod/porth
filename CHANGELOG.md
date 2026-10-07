@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   of every version tag (POR-007).
 - The Kannel-compatible `GET /cgi-bin/sendsms` endpoint, on its own port `kannel.port`
   (default 13013, smsbox's default). `to` and `text` are required; `username` and `password`
-  are ignored (POR-008). `to` may list several space-separated numbers, one message each; a
+  were ignored (POR-008) until POR-021. `to` may list several space-separated numbers, one message each; a
   repeated number is sent once, and one with a character outside `0123456789+-` is dropped.
   `from` falls back to `kannel.default_sender` (POR-016).
 - `GET /api/v1/sms/status/{message_id}` returns the message's real status and timestamps from
@@ -74,6 +74,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `POST /api/v1/sms/send`, unique while its message is stored. A repeat submit with the same
   key, a concurrent one included, gets `200` with the first message's id and current status,
   and nothing new is sent. The status callback echoes the key (POR-028).
+- Kannel `sendsms` credentials: one `[porth.kannel.users.<username>]` table per caller, with a
+  `password` and an optional `allow_ip` list of addresses or CIDR networks. `username`/`user`
+  and `password`/`pass` must match, from an allowed address, or the request gets Kannel's
+  `403 Authorization failed for sendsms`. With no users configured `sendsms` stays open and a
+  warning is logged at startup. The Kannel listener's access log leaves out the query string,
+  so passwords are never logged (POR-021).
 
 **Changed**
 

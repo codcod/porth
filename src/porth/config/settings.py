@@ -1,6 +1,7 @@
 """Settings: the `[porth]` table of a TOML file (design.md §4.3)."""
 
 import dataclasses
+import ipaddress
 import logging
 import os
 import typing as tp
@@ -15,10 +16,19 @@ class HTTPConfig:
 
 
 @dataclasses.dataclass(kw_only=True)
+class KannelUser:
+    password: str
+    # addresses or CIDR networks; empty: any address
+    allow_ip: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(kw_only=True)
 class KannelConfig:
     host: str = '0.0.0.0'
     port: int = 13013  # smsbox's sendsms default
     default_sender: tp.Optional[str] = None  # Kannel's global-sender
+    # username -> its sendsms-user; none: sendsms is open
+    users: dict[str, KannelUser] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -94,6 +104,14 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     for f in dataclasses.fields(StoreConfig):
         if getattr(settings.store, f.name) < 1:
             raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')
+    for name, user in settings.kannel.users.items():
+        for entry in user.allow_ip:
+            try:
+                ipaddress.ip_network(entry)
+            except ValueError:
+                raise ValueError(
+                    f'invalid porth.kannel.users.{name}.allow_ip: {entry!r}'
+                ) from None
     return settings
 
 
@@ -127,6 +145,11 @@ def _coerce(key: str, hint: tp.Any, value: tp.Any) -> tp.Any:
             _, item = tp.get_args(hint)
             return {k: _coerce(f'{key}.{k}', item, v) for k, v in value.items()}
         hint = dict
+    elif tp.get_origin(hint) is list:  # an array of X
+        if isinstance(value, list):
+            (item,) = tp.get_args(hint)
+            return [_coerce(f'{key}[{i}]', item, v) for i, v in enumerate(value)]
+        hint = list
     elif isinstance(hint, type) and dataclasses.is_dataclass(hint):
         if isinstance(value, dict):
             return _build(hint, value, key)
@@ -139,5 +162,5 @@ def _coerce(key: str, hint: tp.Any, value: tp.Any) -> tp.Any:
     elif hint is str and isinstance(value, str):
         return value
     table = hint is dict or dataclasses.is_dataclass(hint)
-    expected = 'a table' if table else hint.__name__
+    expected = 'a table' if table else 'a list' if hint is list else hint.__name__
     raise ValueError(f'invalid {key}: {value!r} is not {expected}')

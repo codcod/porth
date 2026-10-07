@@ -1,11 +1,15 @@
 """Kannel-compatible API implementation."""
 
+import hmac
+import ipaddress
 import logging
 import typing as tp
 
+import aiohttp.abc
 from aiohttp import web
 from sqlalchemy.exc import SQLAlchemyError
 
+from porth.config.settings import KannelUser
 from porth.core.exceptions import NoRoute
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
@@ -24,6 +28,7 @@ def create_kannel_app(
     router: Router,
     uow_factory: tp.Callable[[], AbstractUnitOfWork],
     default_sender: tp.Optional[str] = None,
+    users: tp.Optional[tp.Mapping[str, KannelUser]] = None,
 ) -> web.Application:
     """Create the aiohttp application serving Kannel's GET /cgi-bin/sendsms."""
     app = web.Application()
@@ -31,12 +36,67 @@ def create_kannel_app(
     app['router'] = router
     app['uow_factory'] = uow_factory
     app['default_sender'] = default_sender
+    app['users'] = users or {}
+    if not app['users']:
+        logger.warning(
+            'Kannel API: no porth.kannel.users configured; sendsms accepts any caller'
+        )
     app.router.add_get('/cgi-bin/sendsms', kannel_send_sms, allow_head=False)
     return app
 
 
+class KannelAccessLogger(aiohttp.abc.AbstractAccessLogger):
+    """
+    The Kannel listener's access log: the path without its query string, since the
+    default format's %r would log the query-string password.
+    """
+
+    def log(
+        self, request: web.BaseRequest, response: web.StreamResponse, time: float
+    ) -> None:
+        self.logger.info(
+            f'{request.remote} "{request.method} {request.path}" '
+            f'{response.status} {response.body_length}'
+        )
+
+
+def _authorised(request: web.Request) -> bool:
+    """smsbox's sendsms-user check; open when no user is configured."""
+    users = request.app['users']
+    if not users:
+        return True
+    params = request.query
+    username = params.get('username', params.get('user'))
+    password = params.get('password', params.get('pass'))
+    user = users.get(username)
+    if user is None or password is None:
+        return False
+    if not hmac.compare_digest(password.encode(), user.password.encode()):
+        return False
+    if not user.allow_ip:
+        return True
+    try:
+        addr = ipaddress.ip_address(request.remote)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    # ponytail: the networks are parsed per request; pre-parse them if users grow long lists
+    return any(addr in ipaddress.ip_network(n) for n in user.allow_ip)
+
+
 async def kannel_send_sms(request: web.Request) -> web.Response:
     """Kannel-compatible SMS send endpoint."""
+    # Before any other check, as in smsbox
+    if not _authorised(request):
+        username = request.query.get('username', request.query.get('user'))
+        logger.warning(
+            f'Kannel API: authorization failed for {username!r} from {request.remote}'
+        )
+        # Kannel's answer, word for word, whichever check failed
+        return web.Response(
+            text='Authorization failed for sendsms',
+            content_type='text/plain',
+            status=403,
+        )
     try:
         # Parse query parameters (Kannel style)
         params = request.query
@@ -74,7 +134,7 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
             except NoRoute as e:
                 logger.info(f'Kannel API: dropping recipient {to!r}: {e}')
 
-        # One internal message per recipient; username/password are never read (design.md §2)
+        # One internal message per recipient; the credentials were checked above
         messages = [
             SMSMessage(
                 source_addr=source_addr,
