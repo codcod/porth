@@ -1,1 +1,0 @@
-# SMPP protocol handler

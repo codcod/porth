@@ -9,7 +9,7 @@ from prometheus_client import REGISTRY
 from sqlalchemy.exc import IntegrityError
 
 from porth.adapters.repository import AbstractMessageRepository
-from porth.core.message import MessageStatus, SMSMessage
+from porth.domain.model import MessageStatus, SMSMessage
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 

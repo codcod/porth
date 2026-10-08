@@ -1,1 +1,0 @@
-# Kannel compatibility module

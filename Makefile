@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
+.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check fmt perf docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -53,9 +53,9 @@ test: ## Run all tests
 	@echo "Running all tests..."
 	$(UV) run pytest $(TEST_DIR) -v
 
-test-unit: ## Run unit tests only
+test-unit: ## Run unit and e2e tests (no database, no SMSC)
 	@echo "Running unit tests..."
-	$(UV) run pytest $(TEST_DIR)/unit -v
+	$(UV) run pytest $(TEST_DIR)/unit $(TEST_DIR)/e2e -v
 
 test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test database)
 	@echo "Running integration tests..."
@@ -67,28 +67,40 @@ test-coverage: ## Run tests with coverage report
 	@echo "Coverage report generated in htmlcov/"
 
 # Code Quality
-lint: ## Run linting with ruff
+lint: ## Run ruff, the ruff format check and ty
 	@echo "Running linter..."
-	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR) migrations/env.py
+	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ty check $(SRC_DIR)
 
 format: ## Format code with ruff
 	@echo "Formatting code..."
-	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) migrations/env.py
+	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+
+fmt: ## Fix lint findings and format code with ruff
+	$(UV) run ruff check --fix $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
 
 format-check: ## Check code formatting without making changes
 	@echo "Checking code formatting..."
-	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) migrations/env.py
+	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
 
-type-check: ## Run type checking with mypy
+type-check: ## Run type checking with ty
 	@echo "Running type checks..."
-	$(UV) run mypy $(SRC_DIR)
+	$(UV) run ty check $(SRC_DIR)
 
-check: lint format-check type-check ## Run all code quality checks
+check: lint ## Run all code quality checks (lint runs them all)
 
 # Running the application
 run: ## Run the application on config/config.toml
 	@echo "Starting Porth SMS Gateway..."
-	$(UV) run $(PYTHON) -m $(PROJECT_NAME).main $(CONFIG_DIR)/config.toml
+	$(UV) run bin/porth $(CONFIG_DIR)/config.toml
+
+perf: ## Run the k6 check against a running porth (BASE_URL, default localhost:8080)
+	k6 run $(TEST_DIR)/performance/k6/script.js
+
+docker-build: ## Build the porth container image
+	docker build -t $(PROJECT_NAME) .
 
 # Database (the DSN is the `db` setting in $(CONFIG_DIR)/config.toml, read as the
 # gateway reads it)
@@ -107,7 +119,7 @@ downgrade: ## Revert migrations: make downgrade [rev=-1]
 
 # Configuration
 config-check: ## Validate config/config.toml the way the gateway loads it
-	$(UV) run $(PYTHON) -m porth.main --check $(CONFIG_DIR)/config.toml
+	$(UV) run bin/porth --check $(CONFIG_DIR)/config.toml
 	@echo "$(CONFIG_DIR)/config.toml is valid"
 
 # Dependencies

@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+"""Run porth on a config file (default config/config.toml), or --check the file."""
+
+import argparse
+
+from aiohttp import web
+from monobase.config import setup_logging
+
+from porth.config.settings import load_settings
+from porth.entrypoints.app import Gateway, build_app
+
+parser = argparse.ArgumentParser(prog='porth')
+parser.add_argument('config', nargs='?', default='config/config.toml')
+parser.add_argument(
+    '--check',
+    action='store_true',
+    help='validate the config as startup does (connects to nothing) and exit',
+)
+args = parser.parse_args()
+settings = load_settings(args.config)
+if args.check:
+    Gateway(settings)
+else:
+    setup_logging(settings.log_level)
+    web.run_app(build_app(settings), host=settings.http.host, port=settings.http.port)

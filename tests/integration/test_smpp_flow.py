@@ -19,13 +19,13 @@ from porth.config.settings import (
     Settings,
     SMPPClientConfig,
 )
-from porth.core.delivery import DeliveryEngine
-from porth.core.dlr import DLRHandler
-from porth.core.message import MessageStatus, SMSMessage
-from porth.core.mo import MOHandler
-from porth.core.queue import MessageQueue
-from porth.main import SMSGateway
-from porth.protocols.smpp.client import SMPPClient
+from porth.service_layer.delivery import DeliveryEngine
+from porth.service_layer.dlr import DLRHandler
+from porth.domain.model import MessageStatus, SMSMessage
+from porth.service_layer.mo import MOHandler
+from porth.adapters.queue import MessageQueue
+from porth.entrypoints.app import Gateway
+from porth.adapters.smpp import SMPPClient
 from tests.conftest import FakeUowFactory
 
 
@@ -309,7 +309,7 @@ async def test_each_number_goes_out_through_its_prefixs_smsc(uow_factory):
             host='127.0.0.1', port=port, system_id='porth', password='pw'
         )
     kannel_port = free_port()
-    gateway = SMSGateway(
+    gateway = Gateway(
         Settings(
             http=HTTPConfig(host='127.0.0.1', port=0),
             kannel=KannelConfig(host='127.0.0.1', port=kannel_port),

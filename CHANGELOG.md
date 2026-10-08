@@ -46,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   SMSC holds up only its own messages. Receipts correlate by SMSC and id, an MO reply leaves
   through the SMSC the MO arrived on, and `%i` in `mo.url` and `dlr-url` is the SMSC's name
   (POR-020).
-- `python -m porth.main --check <file>`, which `make config-check` now runs, validates a
+- `bin/porth --check <file>`, which `make config-check` now runs, validates a
   configuration as startup does, routing rules and each SMSC's `throughput` included,
   without connecting to anything (POR-020).
 - An optional `priority` (`high` or `normal`, the default) on `POST /api/v1/sms/send`. A
@@ -85,17 +85,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   retrying gauges, submit latency), a JSON `GET /status` (version, uptime, per-SMSC state),
   and `GET /ready`, `503` while any SMSC is unbound. New dependency: `prometheus-client`
   (POR-022).
+- A container image: `make docker-build` builds a distroless Python 3.13 image whose
+  entrypoint is `python`, so it runs both `bin/porth` and the one-off
+  `python -m alembic upgrade head`. New Makefile targets `docker-build`, `fmt` and `perf`
+  (a k6 check of `GET /health`) (POR-019).
 
 **Changed**
 
 - `GET /health` carries the real time in `timestamp` instead of a fixed value (POR-022).
 - **Breaking:** configuration is one TOML file, `config/config.toml` by default, its path
-  the command's argument (`python -m porth.main [config]`): the `[porth]` table, validated
+  the command's argument (`bin/porth [config]`): the `[porth]` table, validated
   strictly (unknown key, wrong type, missing required key, unknown `log_level`). The YAML
   files, `PORTH_*` variables and `.env` are no longer read. `smpp.clients` became the single
   `[porth.smpp.client]` table. `log_level` takes effect, and `make migrate` reads `db` from the
   same file (POR-012).
 - Python 3.13 or later is required (POR-018).
+- **Breaking:** `bin/porth [config] [--check]` replaces `python -m porth.main`, and the code
+  is laid out as domain, adapters, service layer and entrypoints (design.md §4.6). Type checking
+  uses `ty` instead of mypy, and `make lint` also checks formatting and types (POR-019).
 - **Breaking:** `[porth.smpp.client]` became `[porth.smsc.<name>]`, and `delivery.throughput`
   became each SMSC's `throughput`. A number no SMSC takes is refused at submit: Kannel's
   `403 Not routable. Do not try again.` when no number in the request routes (others are

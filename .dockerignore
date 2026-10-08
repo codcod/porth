@@ -1,0 +1,12 @@
+.venv
+.git
+tests
+docs
+dist
+graphify-out
+**/__pycache__
+.pytest_cache
+.ruff_cache
+htmlcov
+*.png
+.env

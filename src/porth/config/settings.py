@@ -8,6 +8,9 @@ import typing as tp
 
 import monobase.config
 
+if tp.TYPE_CHECKING:
+    from _typeshed import DataclassInstance
+
 
 @dataclasses.dataclass(kw_only=True)
 class HTTPConfig:
@@ -115,11 +118,11 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     return settings
 
 
-T = tp.TypeVar('T')
+T = tp.TypeVar('T', bound='DataclassInstance')
 
 
 def _build(cls: type[T], data: dict[str, tp.Any], path: str) -> T:
-    fields = dataclasses.fields(cls)  # type: ignore[arg-type]
+    fields = dataclasses.fields(cls)
     unknown = data.keys() - {f.name for f in fields}
     if unknown:
         raise ValueError(
