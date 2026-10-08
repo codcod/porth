@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
-from porth.core.message import MessageStatus, SMSMessage
+from porth.domain.model import MessageStatus, SMSMessage
 
 _UNSENT = (MessageStatus.PENDING.value, MessageStatus.QUEUED.value)
 _FINISHED = (

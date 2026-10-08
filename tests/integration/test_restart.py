@@ -22,7 +22,7 @@ from porth.config.settings import (
     Settings,
     SMPPClientConfig,
 )
-from porth.main import SMSGateway
+from porth.entrypoints.app import Gateway
 from tests.integration.conftest import DSN
 from tests.integration.test_repository import pytestmark  # noqa: F401
 from tests.integration.test_smpp_flow import free_port
@@ -101,9 +101,9 @@ async def env(database):
     await engine.dispose()
 
 
-def gateway(smsc: SMSC, kannel_port: int, name: str = 'a') -> SMSGateway:
+def gateway(smsc: SMSC, kannel_port: int, name: str = 'a') -> Gateway:
     """A gateway whose one SMSC, named name, takes every number."""
-    return SMSGateway(
+    return Gateway(
         Settings(
             db=DSN,
             http=HTTPConfig(host='127.0.0.1', port=0),
@@ -201,7 +201,7 @@ async def _is(engine, message_id: str, expected: str) -> bool:
     return await status(engine, message_id) == expected
 
 
-def bound(gw: SMSGateway) -> bool:
+def bound(gw: Gateway) -> bool:
     return gw.smpp_clients[0].connected
 
 

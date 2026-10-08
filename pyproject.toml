@@ -16,11 +16,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "mypy>=2.3.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
+    "ty>=0.0.85",
 ]
 
 [build-system]
@@ -49,6 +49,7 @@ line-length = 88
 indent-width = 4
 target-version = "py313"
 exclude = ["docs/**/*.py"]
+extend-include = ["bin/porth"]  # the entry script has no .py suffix
 
 [tool.ruff.format]
 indent-style = "space"
@@ -95,7 +96,7 @@ addopts = [
   # "--doctest-modules",
   # "--cov=smpp",
 ]
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit", "tests/e2e"]
 pythonpath = ["src"]
 log_format = "%(asctime)s [%(levelname)-8s] [%(filename)s:%(lineno)s] %(message)s"
 log_date_format = "%H:%M:%S"
@@ -114,13 +115,3 @@ filterwarnings = [
 targets = ["src"]
 exclude_dirs = ["tests", ".venv"]
 skips = ["B101", "B301", "B601"]
-
-[tool.mypy]
-python_version = "3.13"
-warn_return_any = true
-warn_unused_configs = true
-
-# smppai ships inline annotations but no py.typed marker; type-check against them anyway
-[[tool.mypy.overrides]]
-module = ["smpp", "smpp.*"]
-follow_untyped_imports = true

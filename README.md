@@ -21,9 +21,11 @@ make dev
 make db-up
 make migrate
 
-# Run the application (config/config.toml)
+# Run the application: bin/porth config/config.toml
 make run
 ```
+
+A container image: `make docker-build` (see the user manual's *Container image*).
 
 ### Basic Usage
 
@@ -62,6 +64,17 @@ make format
 # See all available commands
 make help
 ```
+
+## Layout
+
+The code follows the monolith's traffic service (design.md §4.6). Under `src/porth/`:
+`domain/` holds the message model, with no I/O. `adapters/` holds the PostgreSQL tables and
+repository, the SMPP client, the in-process queue, and the outbound HTTP client for DLR and
+MO calls. `service_layer/` holds the unit of work, the delivery engine, the receipt, MO and
+sweep handlers, routing, and the `submit` and `recover` services. `entrypoints/` holds the REST
+and Kannel aiohttp apps and `build_app()`, which `bin/porth` runs. Tests are grouped into
+`tests/unit`, `tests/e2e`, `tests/integration` (PostgreSQL, `RUN_INTEGRATION_TESTS=1`) and
+`tests/performance/k6`.
 
 ## Configuration
 

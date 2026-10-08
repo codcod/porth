@@ -31,7 +31,7 @@ again before every start after an upgrade. It reads `db` from `config/config.tom
 
 [source,bash]
 ----
-make run        # python -m porth.main config/config.toml
+make run        # bin/porth config/config.toml
 ----
 
 The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).
@@ -39,8 +39,28 @@ It starts even when the SMSC is unreachable; the first send retries the bind. It
 start without its database: an unset `db` or an unreachable PostgreSQL stops it with an
 error.
 
-Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown stops the delivery workers, unbinds
-from the SMSC, and closes the HTTP listener.
+Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown first closes the HTTP API listener,
+then stops the delivery workers, unbinds from the SMSC, and closes the Kannel listener.
+
+== Container image
+
+`make docker-build` builds the image `porth` from the repository's `Dockerfile`: a
+distroless Python 3.13 runtime holding `bin/porth`, the default `config/`, the migrations and
+`alembic.ini`. It exposes 8080 (HTTP API) and 13013 (Kannel), and runs as a non-root user.
+
+The image's entrypoint is `python`, so the same image runs the gateway and the one-off
+migrate step. Mount the deployment's configuration over the default:
+
+[source,bash]
+----
+docker run --rm -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro \
+  porth -m alembic upgrade head
+docker run -d -p 8080:8080 -p 13013:13013 \
+  -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro porth
+----
+
+The migrate step reads `db` from the mounted file, as `make migrate` does. Run it before
+every start after an upgrade.
 
 == What a restart keeps
 

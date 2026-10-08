@@ -5,7 +5,7 @@ sub-tables. The file's path is the command's argument, `config/config.toml` by d
 
 [source,bash]
 ----
-python -m porth.main /etc/porth/config.toml
+bin/porth /etc/porth/config.toml
 ----
 
 `make run` uses the repository's `config/config.toml`, which holds development values. Other
@@ -30,7 +30,7 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
   `CRITICAL`);
 * the file has no `[porth]` table.
 
-`make config-check` (`python -m porth.main --check <file>`) runs the same checks on
+`make config-check` (`bin/porth --check <file>`) runs the same checks on
 `config/config.toml` without connecting to anything.
 
 == Settings

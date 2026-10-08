@@ -10,7 +10,7 @@ from monobase.db import make_engine
 from sqlalchemy.exc import IntegrityError
 
 from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
-from porth.core.message import MessageStatus, SMSMessage
+from porth.domain.model import MessageStatus, SMSMessage
 from porth.service_layer.unit_of_work import SqlAlchemyUnitOfWork
 from tests.integration.conftest import DSN
 
