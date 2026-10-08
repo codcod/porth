@@ -80,9 +80,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `403 Authorization failed for sendsms`. With no users configured `sendsms` stays open and a
   warning is logged at startup. The Kannel listener's access log leaves out the query string,
   so passwords are never logged (POR-021).
+- Monitoring on the HTTP API listener: Prometheus `GET /metrics` (submissions, final
+  statuses, retries, SMPP errors, receipts and MO counted, per-SMSC bind state, waiting and
+  retrying gauges, submit latency), a JSON `GET /status` (version, uptime, per-SMSC state),
+  and `GET /ready`, `503` while any SMSC is unbound. New dependency: `prometheus-client`
+  (POR-022).
 
 **Changed**
 
+- `GET /health` carries the real time in `timestamp` instead of a fixed value (POR-022).
 - **Breaking:** configuration is one TOML file, `config/config.toml` by default, its path
   the command's argument (`python -m porth.main [config]`): the `[porth]` table, validated
   strictly (unknown key, wrong type, missing required key, unknown `log_level`). The YAML

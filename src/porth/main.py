@@ -13,6 +13,7 @@ from monobase.config import setup_logging
 from monobase.db import make_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from porth import metrics
 from porth.config.settings import HTTPConfig, KannelConfig, Settings, load_settings
 from porth.core.delivery import DeliveryEngine
 from porth.core.dlr import DLRHandler
@@ -73,6 +74,25 @@ class SMSGateway:
                 self.dlr_handler,
             )
             self.smpp_clients.append(smpp_client)
+            # Read at scrape; a second gateway in one process (tests) rebinds them
+            metrics.waiting.labels(name).set_function(self.queues[name].qsize)
+            metrics.retrying.labels(name).set_function(
+                functools.partial(len, self.engines[name]._retries)
+            )
+            metrics.bound.labels(name).set_function(
+                functools.partial(getattr, smpp_client, 'connected')
+            )
+
+    def smsc_state(self) -> dict[str, dict[str, tp.Any]]:
+        """Per SMSC: bound, waiting and retrying, for /status and /ready."""
+        return {
+            name: {
+                'bound': engine.smpp_client.connected,
+                'waiting': engine.message_queue.qsize(),
+                'retrying': len(engine._retries),
+            }
+            for name, engine in self.engines.items()
+        }
 
     async def start(self):
         """Start all gateway components."""
@@ -103,7 +123,13 @@ class SMSGateway:
 
         # Start the HTTP API and the Kannel-compatible API, each on its own listener
         await self._serve(
-            create_http_app(self.queues, self.router, self.uow_factory, self.settings),
+            create_http_app(
+                self.queues,
+                self.router,
+                self.uow_factory,
+                self.settings,
+                self.smsc_state,
+            ),
             self.settings.http,
         )
         await self._serve(

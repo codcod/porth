@@ -15,7 +15,7 @@ from porth.core.dlr import DLRHandler
 from porth.core.exceptions import MessageError
 from porth.core.message import MessageStatus, SMSMessage
 from porth.core.queue import MessageQueue
-from tests.conftest import FakeUowFactory
+from tests.conftest import FakeUowFactory, sample
 
 
 class FakeHandler:
@@ -321,3 +321,19 @@ async def test_text_not_kept_is_blanked_once_sent_not_while_retrying():
     await engine._process_message(message)
     assert engine.stored(message).message_text == ''
     assert message.message_text == 'hi'  # only the stored copy is blanked
+
+
+@pytest.mark.asyncio
+async def test_throttled_send_counts_a_retry_and_its_smpp_error():
+    error = SMPPMessageException('x', command_status=CommandStatus.ESME_RTHROTTLED)
+    retries = sample('porth_send_retries_total', smsc='a')
+    errors = sample(
+        'porth_smpp_errors_total', smsc='a', command_status='ESME_RTHROTTLED'
+    )
+    engine, message = make(FakeHandler(error))
+    await engine._process_message(message)
+    assert sample('porth_send_retries_total', smsc='a') == retries + 1
+    assert (
+        sample('porth_smpp_errors_total', smsc='a', command_status='ESME_RTHROTTLED')
+        == errors + 1
+    )

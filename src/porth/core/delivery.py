@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from smpp import CommandStatus
 from smpp.exceptions import SMPPMessageException
 
+from porth import metrics
 from porth.config.settings import DeliveryConfig, Settings
 from porth.core.dlr import DLRHandler
 from porth.core.exceptions import MessageError
@@ -157,6 +158,10 @@ class DeliveryEngine:
             return
 
         except Exception as e:
+            if isinstance(e, SMPPMessageException) and e.command_status is not None:
+                metrics.smpp_errors.labels(
+                    self.smsc, _status_name(e.command_status)
+                ).inc()
             if (
                 isinstance(e, SMPPMessageException)
                 and e.command_status is not None
@@ -244,6 +249,7 @@ class DeliveryEngine:
             logger.info(
                 f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, retrying in {delay}s'
             )
+            metrics.retries.labels(self.smsc).inc()
             task = asyncio.create_task(self._requeue_later(message, delay))
             self._retries.add(task)
             task.add_done_callback(self._retries.discard)

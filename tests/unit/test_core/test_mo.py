@@ -16,7 +16,7 @@ from porth.core.dlr import expand_url
 from porth.core.mo import MOHandler, mo_values
 from porth.core.message import MessageStatus
 from porth.core.queue import MessageQueue
-from tests.conftest import FakeUowFactory
+from tests.conftest import FakeUowFactory, sample
 
 NOW = datetime(2026, 9, 27, 10, 28, 44, tzinfo=timezone.utc)
 TEMPLATE = 'p=%p&P=%P&k=%k&r=%r&a=%a&b=%b&t=%t&T=%T&c=%c&C=%C'
@@ -195,3 +195,13 @@ async def test_reply_goes_back_through_the_arriving_smsc():
 async def test_percent_i_is_the_arriving_smsc():
     app, _, _ = await forward(query='i=%i')
     assert [dict(r.query) for r in app.requests] == [{'i': 'a'}]
+
+
+@pytest.mark.asyncio
+async def test_forwarded_and_failed_mo_are_counted():
+    forwarded = sample('porth_mo_total', smsc='a', result='forwarded')
+    failed = sample('porth_mo_total', smsc='a', result='failed')
+    await forward()
+    await forward(url=closed_port_url())
+    assert sample('porth_mo_total', smsc='a', result='forwarded') == forwarded + 1
+    assert sample('porth_mo_total', smsc='a', result='failed') == failed + 1

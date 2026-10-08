@@ -9,6 +9,7 @@ import aiohttp.abc
 from aiohttp import web
 from sqlalchemy.exc import SQLAlchemyError
 
+from porth import metrics
 from porth.config.settings import KannelUser
 from porth.core.exceptions import NoRoute
 from porth.core.message import MessageStatus, SMSMessage
@@ -178,6 +179,7 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         )
     for message in messages:
         await request.app['queues'][message.smsc].put(message)
+        metrics.submitted.labels('kannel').inc()
         logger.info(f'Kannel API: Queued message {message.message_id}')
 
     ids = ''.join(f'\nMessage-ID: {m.message_id}' for m in messages)

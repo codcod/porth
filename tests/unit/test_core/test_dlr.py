@@ -13,6 +13,7 @@ from smpp import DeliveryReceipt, MessageState
 from porth.core import dlr as dlr_module
 from porth.core.dlr import DLRHandler, expand_url
 from porth.core.message import MessageStatus, SMSMessage
+from tests.conftest import sample
 
 
 def receipt(smsc_id, state, text='id:x stat:DELIVRD'):
@@ -472,3 +473,20 @@ async def test_rest_redirect_is_retried_not_followed(store, handler, recorder):
     await settle(handler)
     assert [r.method for r in recorder.requests] == ['POST', 'POST']
     assert all(recorder.bodies)
+
+
+@pytest.mark.asyncio
+async def test_receipts_and_final_statuses_are_counted(store, uow_factory):
+    def counts():
+        return (
+            sample('porth_messages_final_total', smsc='a', status='delivered'),
+            sample('porth_receipts_total', smsc='a', matched='true'),
+            sample('porth_receipts_total', smsc='a', matched='false'),
+        )
+
+    delivered, matched, unmatched = counts()
+    sent(store, ['s1'])
+    handler = DLRHandler(uow_factory)
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await handler.on_receipt(receipt(None, MessageState.DELIVERED), 'a')  # gives up
+    assert counts() == (delivered + 1, matched + 1, unmatched + 1)

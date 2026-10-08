@@ -1,14 +1,18 @@
 """HTTP/REST API implementation using aiohttp."""
 
+import importlib.metadata
 import logging
+import time
 import typing as tp
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from aiohttp import web, web_request, web_response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from porth import metrics
 from porth.config.settings import Settings
 from porth.core.exceptions import NoRoute
 from porth.core.message import MessageStatus, SMSMessage
@@ -24,8 +28,12 @@ def create_http_app(
     router: Router,
     uow_factory: tp.Callable[[], AbstractUnitOfWork],
     settings: Settings,
+    smsc_state: tp.Callable[[], dict[str, dict[str, tp.Any]]],
 ) -> web.Application:
-    """Create aiohttp application with SMS API routes."""
+    """Create aiohttp application with SMS API routes.
+
+    smsc_state gives, per SMSC name, its `bound`, `waiting` and `retrying`.
+    """
     app = web.Application()
 
     # Store dependencies in app
@@ -33,6 +41,8 @@ def create_http_app(
     app['router'] = router
     app['uow_factory'] = uow_factory
     app['settings'] = settings
+    app['smsc_state'] = smsc_state
+    app['started'] = time.monotonic()
 
     # Add routes
     api_v1 = web.Application()
@@ -43,6 +53,9 @@ def create_http_app(
 
     app.add_subapp('/api/v1', api_v1)
     app.router.add_get('/health', health_check)
+    app.router.add_get('/metrics', metrics_page)
+    app.router.add_get('/status', status)
+    app.router.add_get('/ready', ready)
 
     return app
 
@@ -178,6 +191,7 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             status=503,
         )
     await main_app['queues'][message.smsc].put(message)
+    metrics.submitted.labels('http').inc()
 
     logger.info(f'HTTP API: Queued message {message.message_id}')
     return web.json_response(
@@ -250,7 +264,33 @@ async def health_check(request: web_request.Request) -> web_response.Response:
     health_data = {
         'status': 'healthy',
         'queue_size': sum(q.qsize() for q in queues.values()),
-        'timestamp': '2024-01-01T00:00:00Z',  # TODO: Use actual timestamp
+        'timestamp': _ts(datetime.now(timezone.utc)),
     }
 
     return web.json_response(health_data, status=200)
+
+
+async def metrics_page(request: web_request.Request) -> web_response.Response:
+    """Prometheus exposition of the default registry."""
+    return web.Response(
+        body=generate_latest(), headers={'Content-Type': CONTENT_TYPE_LATEST}
+    )
+
+
+async def status(request: web_request.Request) -> web_response.Response:
+    """Version, uptime and per-SMSC state, as JSON."""
+    return web.json_response(
+        {
+            'version': importlib.metadata.version('porth'),
+            'uptime_seconds': int(time.monotonic() - request.app['started']),
+            'smsc': request.app['smsc_state'](),
+        }
+    )
+
+
+async def ready(request: web_request.Request) -> web_response.Response:
+    """200 while every SMSC is bound, else 503 naming the unbound ones."""
+    unbound = [n for n, s in request.app['smsc_state']().items() if not s['bound']]
+    if unbound:
+        return web.json_response({'ready': False, 'unbound': unbound}, status=503)
+    return web.json_response({'ready': True})

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import aiohttp
 from smpp import Address, DataCoding, Message, TonType
 
+from porth import metrics
 from porth.config.settings import MOConfig
 from porth.core.dlr import expand_url
 from porth.core.message import MessageStatus, SMSMessage
@@ -119,7 +120,9 @@ class MOHandler:
                     why = '' if body else 'empty body'
         except Exception as e:  # operator-supplied URL: anything can go wrong
             logger.warning(f'MO from {sender}: application request failed: {e!r}')
+            metrics.mo.labels(smsc, 'failed').inc()
             return
+        metrics.mo.labels(smsc, 'forwarded').inc()
         if why:
             logger.info(f'MO from {sender}: no reply sent ({why})')
             return

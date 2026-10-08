@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from porth.config.settings import KannelUser
 from porth.core.message import MessageStatus
 from porth.protocols.kannel.api import KannelAccessLogger, create_kannel_app
+from tests.conftest import sample
 from tests.unit.test_protocols.test_http_api import ROUTER, RecordingQueue
 
 PARAMS = {'to': '+306900000000', 'from': 'porth', 'text': 'hi'}
@@ -72,10 +73,12 @@ async def test_sendsms_requires_to_from_and_text(kannel, missing):
 @pytest.mark.asyncio
 async def test_sendsms_queues_one_message_per_recipient(kannel, uow_factory):
     client, queue = kannel
+    submitted = sample('porth_messages_submitted_total', protocol='kannel')
     resp = await client.get(
         '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000010  306900000011'}
     )
     assert resp.status == 200
+    assert sample('porth_messages_submitted_total', protocol='kannel') == submitted + 2
     first, *id_lines = (await resp.text()).split('\n')
     assert first == '0: Accepted for delivery'
     messages = [await queue.get(), await queue.get()]

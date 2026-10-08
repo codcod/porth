@@ -20,6 +20,7 @@ from smpp.exceptions import SMPPException, SMPPPDUException
 from smpp.gsm import make_parts
 from smpp.utils import format_smpp_time
 
+from porth import metrics
 from porth.config.settings import SMPPClientConfig
 from porth.core.exceptions import MessageError
 from porth.core.message import SMSMessage
@@ -179,23 +180,24 @@ class SMPPClient:
 
         try:
             # smppai splits the text and sets the UDH per part; one SMSC id per part
-            smsc_message_ids = await client.submit_multipart(
-                source.addr,
-                destination.addr,
-                message.message_text,
-                data_coding=data_coding,
-                registered_delivery=RegisteredDelivery.SUCCESS_FAILURE
-                if message.dlr_requested
-                else RegisteredDelivery.NO_RECEIPT,
-                source_addr_ton=source.ton,
-                source_addr_npi=source.npi,
-                dest_addr_ton=destination.ton,
-                dest_addr_npi=destination.npi,
-                # the SMSC drops it past then too (design.md §4.2); '': its default
-                validity_period=format_smpp_time(message.valid_until.timestamp())
-                if message.valid_until
-                else '',
-            )
+            with metrics.submit_seconds.labels(self.name).time():
+                smsc_message_ids = await client.submit_multipart(
+                    source.addr,
+                    destination.addr,
+                    message.message_text,
+                    data_coding=data_coding,
+                    registered_delivery=RegisteredDelivery.SUCCESS_FAILURE
+                    if message.dlr_requested
+                    else RegisteredDelivery.NO_RECEIPT,
+                    source_addr_ton=source.ton,
+                    source_addr_npi=source.npi,
+                    dest_addr_ton=destination.ton,
+                    dest_addr_npi=destination.npi,
+                    # the SMSC drops it past then too (design.md §4.2); '': its default
+                    validity_period=format_smpp_time(message.valid_until.timestamp())
+                    if message.valid_until
+                    else '',
+                )
         except Exception as e:
             logger.error(f'SMSC {self.name}: Failed to send message via SMPP: {e}')
             # The whole message is retried; parts the SMSC already accepted are orphans
