@@ -25,7 +25,7 @@ oversights:
 * Authentication on the REST API. The Kannel API checks only `sendsms` credentials.
 * TLS on any transport.
 * Accepting inbound SMPP binds (an SMSC role).
-* Rate limiting, metrics export, tracing, and hot-reloadable configuration.
+* Rate limiting, tracing, and hot-reloadable configuration.
 
 Run {product} only on a trusted network.
 

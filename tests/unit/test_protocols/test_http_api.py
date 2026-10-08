@@ -1,6 +1,6 @@
 """Unit tests for the HTTP API send and status endpoints."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -12,6 +12,7 @@ from porth.core.message import MessageStatus
 from porth.core.queue import MessageQueue
 from porth.core.routing import Router
 from porth.protocols.http.api import create_http_app
+from tests.conftest import sample
 
 BODY = {
     'source_addr': 'porth',
@@ -42,9 +43,16 @@ async def queues(uow_factory):
     return {'a': RecordingQueue(uow_factory), 'b': RecordingQueue(uow_factory)}
 
 
+def smsc_state(bound_a=True):
+    return {
+        'a': {'bound': bound_a, 'waiting': 2, 'retrying': 1},
+        'b': {'bound': True, 'waiting': 0, 'retrying': 0},
+    }
+
+
 @pytest_asyncio.fixture
 async def http(uow_factory, queues):
-    app = create_http_app(queues, ROUTER, uow_factory, Settings())
+    app = create_http_app(queues, ROUTER, uow_factory, Settings(), smsc_state)
     async with TestClient(TestServer(app)) as client:
         yield client, queues['a'], uow_factory.repo
 
@@ -357,3 +365,64 @@ async def test_failed_key_lookup_is_503(http, monkeypatch):
     resp = await client.post('/api/v1/sms/send', json={**BODY, 'idempotency_key': 'k'})
     assert resp.status == 503
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_metrics_lists_every_metric_and_counts_a_submit(http):
+    client, _, _ = http
+    before = sample('porth_messages_submitted_total', protocol='http')
+    await submit(client)
+    assert sample('porth_messages_submitted_total', protocol='http') == before + 1
+    resp = await client.get('/metrics')
+    assert resp.status == 200
+    assert resp.headers['Content-Type'].startswith('text/plain; version=')
+    text = await resp.text()
+    for name in (
+        'porth_messages_submitted_total',
+        'porth_messages_final_total',
+        'porth_send_retries_total',
+        'porth_smpp_errors_total',
+        'porth_receipts_total',
+        'porth_mo_total',
+        'porth_messages_waiting',
+        'porth_messages_retrying',
+        'porth_smsc_bound',
+        'porth_submit_seconds',
+    ):
+        assert f'# TYPE {name} ' in text
+
+
+@pytest.mark.asyncio
+async def test_status_reports_version_uptime_and_smscs(http):
+    client, _, _ = http
+    body = await (await client.get('/status')).json()
+    assert body['version'] and body['uptime_seconds'] >= 0
+    assert body['smsc'] == smsc_state()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'bound_a, status, body',
+    [
+        (True, 200, {'ready': True}),
+        (False, 503, {'ready': False, 'unbound': ['a']}),
+    ],
+)
+async def test_ready_is_503_while_an_smsc_is_unbound(
+    uow_factory, queues, bound_a, status, body
+):
+    app = create_http_app(
+        queues, ROUTER, uow_factory, Settings(), lambda: smsc_state(bound_a)
+    )
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get('/ready')
+        assert (resp.status, await resp.json()) == (status, body)
+
+
+@pytest.mark.asyncio
+async def test_health_carries_the_real_time(http):
+    client, _, _ = http
+    body = await (await client.get('/health')).json()
+    at = datetime.strptime(body['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
+    at = at.replace(tzinfo=timezone.utc)
+    assert abs(datetime.now(timezone.utc) - at) < timedelta(seconds=5)

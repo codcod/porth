@@ -5,6 +5,7 @@ import typing as tp
 from datetime import datetime
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy.exc import IntegrityError
 
 from porth.adapters.repository import AbstractMessageRepository
@@ -171,3 +172,8 @@ class FakeUowFactory:
 @pytest.fixture
 def uow_factory() -> FakeUowFactory:
     return FakeUowFactory()
+
+
+def sample(name: str, **labels: str) -> float:
+    """A metric's current value on the process-wide registry (0 before its first use)."""
+    return REGISTRY.get_sample_value(name, labels) or 0.0

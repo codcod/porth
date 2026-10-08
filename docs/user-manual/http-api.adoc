@@ -156,7 +156,88 @@ that `sendsms` returned.
 {product} keeps message records in PostgreSQL, so a status survives a restart, until the
 retention window deletes the record (see <<Lifecycle>>).
 
-== Health
+== Monitoring
 
-`GET /health` returns `200` with `status` and the current `queue_size` while the process is
-up. It does not check the SMSC bind.
+Four endpoints on the HTTP API listener report on {product}. Like the rest of the HTTP API,
+they need no authentication.
+
+=== Health
+
+`GET /health` is the liveness check. It returns `200` with `status`, the current
+`queue_size` and `timestamp` (UTC, ISO 8601) while the process is up. It does not check the
+SMSC bind.
+
+=== Readiness
+
+`GET /ready` returns `200 {"ready": true}` while every configured SMSC is bound. While any
+is not, it returns `503` and names them:
+
+[source,json]
+----
+{"ready": false, "unbound": ["local"]}
+----
+
+=== Status
+
+`GET /status` returns `200` with the version, the seconds since the HTTP API started, and,
+per SMSC, whether it is bound, how many messages wait in its queue, and how many wait out
+a retry:
+
+[source,json]
+----
+{
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "smsc": {"local": {"bound": true, "waiting": 0, "retrying": 2}}
+}
+----
+
+=== Metrics
+
+`GET /metrics` serves Prometheus metrics in the text exposition format. Besides the
+standard `process_*` and `python_*` metrics, {product} exports:
+
+[cols="3,1,2,4",options="header"]
+|===
+| Metric | Type | Labels | Meaning
+
+| `porth_messages_submitted_total` | counter | `protocol` (`http`, `kannel`) | Messages
+accepted for sending, one per recipient. Replies to MO are not counted.
+| `porth_messages_final_total` | counter | `smsc`, `status` (`delivered`, `failed`,
+`expired`) | Messages reaching a final status.
+| `porth_send_retries_total` | counter | `smsc` | Retries scheduled after a failed send.
+| `porth_smpp_errors_total` | counter | `smsc`, `command_status` | `submit_sm` errors, by
+the SMSC's status name (for example `ESME_RTHROTTLED`).
+| `porth_receipts_total` | counter | `smsc`, `matched` (`true`, `false`) | Delivery
+receipts, matched to a message or given up on.
+| `porth_mo_total` | counter | `smsc`, `result` (`forwarded`, `failed`) | MO forwarded to
+the application, or whose request failed.
+| `porth_messages_waiting` | gauge | `smsc` | Messages in the SMSC's queue.
+| `porth_messages_retrying` | gauge | `smsc` | Messages waiting out a retry.
+| `porth_smsc_bound` | gauge | `smsc` | `1` while the SMSC is bound, else `0`.
+| `porth_submit_seconds` | histogram | `smsc` | Time to submit a message to the SMSC,
+after throughput pacing.
+|===
+
+A message whose SMSC was removed from the configuration, failed at startup, is counted in
+`porth_messages_final_total` under its old SMSC name, or an empty one.
+
+A minimal Prometheus scrape configuration:
+
+[source,yaml]
+----
+scrape_configs:
+  - job_name: porth
+    static_configs:
+      - targets: ["porth.internal:8080"]
+----
+
+Kubernetes-style probes:
+
+[source,yaml]
+----
+livenessProbe:
+  httpGet: {path: /health, port: 8080}
+readinessProbe:
+  httpGet: {path: /ready, port: 8080}
+----

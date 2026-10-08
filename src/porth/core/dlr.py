@@ -11,6 +11,7 @@ from urllib.parse import quote
 import aiohttp
 from smpp import Message, MessageState
 
+from porth import metrics
 from porth.core.message import MessageStatus, SMSMessage
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
@@ -105,6 +106,7 @@ class DLRHandler:
     @staticmethod
     def _ignore(msg: Message, smsc: str) -> None:
         assert msg.receipt is not None
+        metrics.receipts.labels(smsc, 'false').inc()
         # info, not debug: a systematic SMSC id-format mismatch must show up
         logger.info(
             f'Receipt for unknown SMSC id {msg.receipt.id!r} from {smsc} ignored'
@@ -125,6 +127,7 @@ class DLRHandler:
                 message = await uow.messages.get_by_smsc_id_for_update(smsc, smsc_id)
                 if message is None:
                     return False
+                metrics.receipts.labels(smsc, 'true').inc()
                 if message.status in _TERMINAL:
                     logger.debug(
                         f'Receipt {smsc_id} for {message.status.value} message '
@@ -168,6 +171,9 @@ class DLRHandler:
         dlr-url is due only when a receipt (smsc_id, text) drives the status.
         """
         assert message.status in _TERMINAL
+        # ponytail: counted before the caller commits, so a rolled-back write counts
+        # too; counting after commit would change every caller
+        metrics.final.labels(message.smsc or '', message.status.value).inc()
         await uow.messages.update(message)
         call: tp.Optional[Call] = None
         if message.protocol == 'http' and message.callback_url:
