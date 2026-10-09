@@ -17,7 +17,8 @@ from smpp import (
 )
 from smpp import SMPPClient as SmppaiClient
 from smpp.exceptions import SMPPException, SMPPPDUException
-from smpp.gsm import make_parts
+from smpp.gsm import SMPP_GSMFEAT_UDHI, make_parts
+from smpp.protocol.codec import encode_message_with_encoding
 from smpp.utils import format_smpp_time
 
 from porth import metrics
@@ -47,6 +48,21 @@ def choose_data_coding(text: str) -> tuple[DataCoding, int]:
             raise MessageError('message needs more than 255 SMS parts')
         return data_coding, len(parts)
     raise MessageError('message text cannot be encoded as GSM 03.38 or UCS2')
+
+
+def sms_payload(
+    content: str | bytes, data_coding: int, udh: tp.Optional[bytes]
+) -> str | bytes:
+    """
+    What submit_multipart sends: text content itself, which smppai splits on
+    characters, unless it carries a client UDH. Then bytes: the UDH and the text
+    encoded with data_coding. 8-bit content is bytes already.
+    """
+    if isinstance(content, str):
+        if udh is None:
+            return content
+        content = encode_message_with_encoding(content, data_coding)
+    return (udh or b'') + content
 
 
 class Pacer:
@@ -161,7 +177,21 @@ class SMPPClient:
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
-        data_coding, parts = choose_data_coding(message.message_text)
+        payload: str | bytes = message.message_text
+        esm_class = 0
+        if 'data_coding' in message.protocol_data:  # chosen at submit (Kannel's)
+            data_coding = message.protocol_data['data_coding']
+            udh = message.protocol_data.get('udh')
+            udh = bytes.fromhex(udh) if udh is not None else None
+            data = message.protocol_data.get('data')  # 8-bit content
+            content = bytes.fromhex(data) if data is not None else message.message_text
+            payload = sms_payload(content, data_coding, udh)
+            parts = len(make_parts(payload, data_coding))
+            if udh is not None:
+                # the client's UDH: one segment, checked at submit
+                esm_class = SMPP_GSMFEAT_UDHI
+        else:
+            data_coding, parts = choose_data_coding(message.message_text)
         source = Address.parse(message.source_addr)
         destination = Address.parse(message.destination_addr)
 
@@ -184,8 +214,9 @@ class SMPPClient:
                 smsc_message_ids = await client.submit_multipart(
                     source.addr,
                     destination.addr,
-                    message.message_text,
+                    payload,
                     data_coding=data_coding,
+                    esm_class=esm_class,
                     registered_delivery=RegisteredDelivery.SUCCESS_FAILURE
                     if message.dlr_requested
                     else RegisteredDelivery.NO_RECEIPT,

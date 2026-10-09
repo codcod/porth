@@ -376,3 +376,32 @@ async def test_idempotency_key_is_unique_and_found(db):
     async with SqlAlchemyUnitOfWork(engine) as uow:
         assert await uow.messages.get_by_idempotency_key('k-2') == first
         assert await uow.messages.get_by_idempotency_key('k-none') is None
+
+
+@pytest.mark.asyncio
+async def test_kannel_8bit_content_with_nul_is_stored(db):
+    # PostgreSQL text holds no NUL: 8-bit content is kept as hex (POR-005 B1)
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from porth.adapters.queue import MessageQueue
+    from porth.entrypoints.kannel_api import create_kannel_app
+    from tests.e2e.test_http_api import ROUTER
+
+    engine, ids = db
+    app = create_kannel_app(
+        {'a': MessageQueue(), 'b': MessageQueue()},
+        ROUTER,
+        lambda: SqlAlchemyUnitOfWork(engine),
+    )
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get(
+            '/cgi-bin/sendsms?to=306900000001&from=p&coding=1&text=%01%00%FF'
+        )
+        body = await resp.text()
+    assert resp.status == 202, body
+    message_id = body.split('Message-ID: ')[1]
+    ids.append(message_id)
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        got = await uow.messages.get(message_id)
+    assert got.protocol_data['data'] == '0100ff'
+    assert got.message_text == ''

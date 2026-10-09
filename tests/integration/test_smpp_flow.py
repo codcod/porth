@@ -331,7 +331,7 @@ async def test_each_number_goes_out_through_its_prefixs_smsc(uow_factory):
                     'text': 'hi',
                 },
             ) as response:
-                assert response.status == 200
+                assert response.status == 202
         async with asyncio.timeout(5):
             while not (received['a'] and received['b']):
                 await asyncio.sleep(0.01)

@@ -255,18 +255,20 @@ async def test_engine_failed_stores_the_rest_callback(monkeypatch, error, retry_
 
 
 @pytest.mark.asyncio
-async def test_engine_failed_sends_no_kannel_dlr_url(monkeypatch):
+async def test_engine_failed_unaccepted_calls_kannel_dlr_url_with_16(monkeypatch):
     engine, message = make(
         FakeHandler(PERMANENT),
         protocol='kannel',
         dlr_url='http://k/dlr?d=%d',
-        protocol_data={'dlr_mask': 31},
+        protocol_data={'dlr_mask': 3},
     )
     calls = dispatched(engine, monkeypatch)
     await engine._process_message(message)
     assert engine.stored(message).status == MessageStatus.FAILED
-    assert engine.uow_factory.repo.dlr_callbacks == {}
-    assert calls == [None]
+    # the SMSC never accepted it: Kannel's bit 16, due on any of 1, 2, 16
+    url = 'http://k/dlr?d=16'
+    assert engine.uow_factory.repo.dlr_callbacks == {message.message_id: (url, None)}
+    assert calls == [(message.message_id, url, None)]
 
 
 def hours(n: float) -> datetime:

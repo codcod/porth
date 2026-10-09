@@ -6,7 +6,7 @@ the host it points at.
 
 == Send a message
 
-`GET /cgi-bin/sendsms` with query parameters:
+`GET /cgi-bin/sendsms` with query parameters, or `POST` (see <<POST form>>):
 
 [cols="2,1,4",options="header"]
 |===
@@ -15,12 +15,28 @@ the host it points at.
 | `to` | yes | Recipient numbers, separated by spaces. Each becomes its own message. A number
 with any character other than `0123456789+-` is dropped, and a repeated number is sent once,
 as in Kannel.
-| `text` | yes | Message text.
+| `text` | no | Message text. Absent or empty sends an empty SMS (or the `udh` alone), as in
+Kannel.
 | `from` | yes, unless `kannel.default_sender` is set | Sender address. Without it, the message
 comes from `kannel.default_sender`.
+| `charset` | no | The charset `text` is in. Defaults to `UTF-8`, or `UTF-16BE` with
+`coding=2`. Ignored with `coding=1`.
+| `coding` | no | `0` GSM text, `1` 8-bit data (`text` sent as its bytes), `2` UCS-2. Without
+it, or with `0` and no `udh`, {product} sends GSM 03.38 if it can carry the text and UCS-2
+otherwise. With a `udh` and no `coding`, the message is 8-bit, as in Kannel.
+| `mclass` | no | Message class `0`–`3`, sent in the data coding as Kannel does (see
+<<Data coding>>).
+| `flash` | no | `1` is a flash SMS, the same as `mclass=0`. An explicit `mclass` wins.
+| `udh` | no | A User Data Header the client built, URL-encoded. {product} sends it with the
+text as exactly one SMS, with the UDH indicator set, and never splits it. Its first octet must
+be its length less one.
+| `validity` | no | Minutes, at least `1` and ending before 2100, after which the message is no longer sent. It is
+dropped as `expired` if still unsent then, and the SMSC is given the same deadline.
 | `dlr-url` | no | URL to fetch with the message's final outcome. See <<Delivery reports>>.
-| `dlr-mask` | no | Which outcomes fetch `dlr-url`: `1` delivered, `2` not delivered, or
-their sum. Without it, no callback is made.
+`dlrurl` is accepted in its place.
+| `dlr-mask` | no | Which outcomes fetch `dlr-url`: `1` delivered, `2` not delivered, `16` not
+accepted by the SMSC, or their sum. Without it, no callback is made. `dlrmask` is accepted in
+its place.
 | `smsc` | no | The SMSC to send through, by its `[porth.smsc.<name>]` name, in place of the
 routing rules. Empty is the same as absent. Unlike Kannel, where it is a hint the routing
 rules can override, it always wins, and an SMSC that is not configured is an error. See
@@ -28,37 +44,113 @@ rules can override, it always wins, and an SMSC that is not configured is an err
 | `username`, `password` | yes, once users are configured | The caller's credentials, checked
 against `[porth.kannel.users]`. `user` and `pass` are accepted in their place, as in Kannel.
 See <<Authentication>>.
+| `deferred`, `priority` | — | Refused. See <<Responses>>.
 |===
 
-Any other parameter is ignored. Any other method returns `405`. See <<Limitations>>.
+Where an alias is sent with its name (`dlrmask` with `dlr-mask`), the hyphenated name wins.
+A `coding`, `mclass`, `flash` or `validity` that is not an integer is ignored, as in Kannel.
+Any other parameter is ignored. `HEAD` and other methods return `405`.
 
 [source,bash]
 ----
 curl 'http://localhost:13013/cgi-bin/sendsms?username=u&password=p&to=%2B306900000000&from=porth&text=Hello'
 ----
 
-A queued message returns `200` with a `text/plain` body:
+A queued message returns `202` with the body:
 
 ----
 0: Accepted for delivery
 Message-ID: 3f1c…
 ----
 
-With several recipients there is one `Message-ID` line per message, in `to` order once
-dropped and repeated numbers are left out, so there can be fewer lines than numbers in `to`.
-A number that no SMSC takes (see <<Routing rules>>) is dropped too, as in Kannel. The request
-is otherwise accepted or refused whole.
+The `Message-ID` lines are {product}'s addition to Kannel's answer. With several recipients
+there is one line per message, in `to` order once dropped and repeated numbers are left out,
+so there can be fewer lines than numbers in `to`. A number that no SMSC takes (see <<Routing
+rules>>) is dropped too, as in Kannel. The request is otherwise accepted or refused whole.
+`202` means the messages were queued, not sent.
 
-When not one number routes, including when `smsc` names an SMSC that is not configured,
-{product} answers as Kannel does, `403` with the `text/plain` body:
+=== Data coding
 
+The `data_coding` each message is sent with is Kannel's:
+
+[cols="1,1,1",options="header"]
+|===
+| Alphabet | No class | Class `m` (`0`–`3`)
+
+| GSM | `0x00` | `0xF0` + `m`
+| 8-bit | `0x04` | `0xF4` + `m`
+| UCS-2 | `0x08` | `0x18` + `m`
+|===
+
+=== POST form
+
+`POST /cgi-bin/sendsms` takes the text as the body, and every parameter as an
+`X-Kannel-<Name>` header: `X-Kannel-Username`, `X-Kannel-Password`, `X-Kannel-From`,
+`X-Kannel-To`, `X-Kannel-Coding`, `X-Kannel-MClass`, `X-Kannel-DLR-Mask`, `X-Kannel-DLR-Url`,
+`X-Kannel-UDH` (hex, or URL-encoded, as smsbox reads it), and so on.
+
+* `Content-Type: text/plain` takes the charset from the content type (`text/plain;
+  charset=ISO-8859-1`), with the same default as `charset`.
+* `Content-Type: application/octet-stream` is 8-bit data unless `X-Kannel-Coding` says
+  otherwise.
+* Any other content type, including a form body, gets `400` `Invalid content-type`, before the
+  credentials are checked.
+* The query string is not read: credentials sent there are missing, and get the `403`.
+
+[source,bash]
 ----
-Not routable. Do not try again.
+curl -X POST -H 'X-Kannel-Username: u' -H 'X-Kannel-Password: p' -H 'X-Kannel-From: porth' \
+     -H 'X-Kannel-To: +306900000000' -H 'Content-Type: text/plain' --data-binary 'Hello' \
+     http://localhost:13013/cgi-bin/sendsms
 ----
 
-`200` means the messages were queued, not sent. A `to` with no valid number, a missing `text`,
-or a missing `from` with no `kannel.default_sender` returns `400` with
-`3: Failed to send SMS: <reason>`.
+=== Responses
+
+Every answer has `Content-Type: text/html`, as Kannel's, and one of these bodies:
+
+[cols="1,4,4",options="header"]
+|===
+| Status | Body | When
+
+| `202` | `0: Accepted for delivery` | Queued, followed by the `Message-ID` lines.
+| `400` | `Invalid content-type` | A `POST` that is not `text/plain` or `application/octet-stream`.
+| `403` | `Authorization failed for sendsms` | See <<Authentication>>.
+| `400` | `Missing receiver number, rejected` | No `to`, or an empty one.
+| `400` | `Number(s) has/have been denied by white- and/or black-lists.` | Every number in `to`
+was dropped.
+| `400` | `Sender missing and no global set, rejected` | No `from` and no
+`kannel.default_sender`.
+| `400` | `Coding field misformed, rejected` | `coding` is an integer other than `0`–`2`.
+| `400` | `MClass field misformed, rejected` | `mclass` is an integer other than `0`–`3`.
+| `400` | `UDH field misformed, rejected` | The `udh`'s first octet is not its length less
+one.
+| `400` | `Charset or body misformed, rejected` | An unknown `charset` (or a Python codec
+that is no charset, such as `punycode`), a `text` not in it, a text the `coding` can't carry,
+or one longer than 255 SMS parts.
+| `400` | `UDH field is too long, rejected` | `udh` and `text` don't fit in one SMS.
+| `400` | `DLR-Mask field misformed, rejected` | A negative `dlr-mask`, or one with none of
+bits `1`, `2` and `16`.
+| `400` | `Validity field misformed, rejected` | `validity` is an integer below `1`, or one
+that ends in 2100 or later.
+| `400` | `Deferred field misformed, rejected` | Any `deferred`.
+| `400` | `Priority field misformed, rejected` | Any `priority`.
+| `403` | `Not routable. Do not try again.` | Not one number routes, including when `smsc`
+names an SMSC that is not configured.
+| `503` | `Temporal failure, try again later.` | The message store is unavailable; nothing is
+queued.
+|===
+
+The checks run in this order, so a request gets the first answer that applies.
+
+=== Differences from Kannel 1.4.5
+
+* `flash=1` sends a flash SMS. Kannel 1.4.5 ignores it.
+* Without `coding`, a text GSM can't carry goes out as UCS-2. Kannel sends it as GSM with
+  every such character replaced by `?`.
+* The `Message-ID` lines in the `202` answer.
+* A `dlr-mask` that would never fetch `dlr-url` (negative, or none of bits `1`, `2`, `16`) is
+  refused. Kannel accepts it and never calls.
+* `deferred` and `priority` are refused. Kannel honours them.
 
 == Authentication
 
@@ -90,19 +182,29 @@ any other, so a request with bad credentials and no `to` gets this `403`, not a 
 When a delivery receipt settles a message (see <<Delivery receipts>>), {product}
 fetches the message's `dlr-url` if `dlr-mask` includes the outcome:
 
-[cols="1,1,3",options="header"]
+[cols="2,1,3",options="header"]
 |===
 | Outcome | Bit | `%d`
 
 | `delivered` | 1 | `1`
 | `failed` or `expired` | 2 | `2`
+| `failed` before the SMSC accepted it | 2 or 16 | `16`
 |===
+
+A message fails before the SMSC accepts it when the SMSC rejects the `submit_sm`, when
+{product} can't send it, or when its retries run out. As in Kannel, it fetches `dlr-url` with
+`%d=16` when `dlr-mask` has bit 2 or 16; a mask of `1` alone gets no fetch. With no receipt,
+`%F` and `%A` are empty, and `%t` and `%T` are the time of the failure.
 
 A message that {product} expires because no receipt came within `store.dlr_timeout_hours`
 gets no `dlr-url` fetch, as Kannel never expires a message on its own.
 
-`dlr-mask` must be an integer. A missing or non-integer mask means no callback. The other
-Kannel bits (4, 8, 16) are never produced yet (POR-005).
+A message {product} expires before sending it, because its `validity` passed, gets no
+`dlr-url` fetch either.
+
+`dlr-mask` must be an integer. A missing or non-integer mask means no callback. A negative
+mask, or one with none of bits 1, 2 and 16, is refused (see <<Responses>>). Kannel's bits 4
+and 8 (SMSC buffered and accepted) are never produced.
 
 {product} replaces these escape codes in `dlr-url`, each URL-encoded:
 
@@ -112,7 +214,7 @@ Kannel bits (4, 8, 16) are never produced yet (POR-005).
 
 | `%d` | The delivery report value from the table above.
 | `%I` | {product}'s message id, as returned in `Message-ID`.
-| `%F` | The SMSC message id of the part whose receipt settled the message.
+| `%F` | The SMSC message id of the part whose receipt settled the message. Empty for `%d=16`.
 | `%A` | The receipt text the SMSC sent.
 | `%t` | The receipt's arrival time in UTC, as `YYYY-MM-DD HH:MM`.
 | `%T` | The receipt's arrival time as a UNIX timestamp.
@@ -130,7 +232,6 @@ replaced even when it is part of a percent-encoding, so write a literal `%` in `
 * A callback still being attempted when {product} stops is made again after the next start,
   so the client can receive the same callback twice (as with Kannel).
 * There is one callback per message, including a long message sent in several parts.
-* There is no callback for a message that fails before the SMSC accepts it (POR-005).
 
 [source,bash]
 ----

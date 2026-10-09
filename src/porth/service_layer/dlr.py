@@ -171,7 +171,8 @@ class DLRHandler:
         """Write message's final status (set at now) in uow, with the call it is due.
 
         The caller commits, then passes the returned call to dispatch(). A Kannel
-        dlr-url is due only when a receipt (smsc_id, text) drives the status.
+        dlr-url is due only when a receipt (smsc_id, text) drives the status, or the
+        message failed before the SMSC accepted it (Kannel's bit 16).
         """
         assert message.status in _TERMINAL
         # ponytail: counted before the caller commits, so a rolled-back write counts
@@ -181,9 +182,13 @@ class DLRHandler:
         call: tp.Optional[Call] = None
         if message.protocol == 'http' and message.callback_url:
             call = (message.message_id, message.callback_url, _rest_body(message, now))
-        elif smsc_id is not None and (
-            url := self._kannel_url(message, smsc_id, text, now)
-        ):
+        elif (
+            smsc_id is not None
+            or (
+                message.status is MessageStatus.FAILED
+                and 'smsc_message_ids' not in message.protocol_data
+            )
+        ) and (url := self._kannel_url(message, smsc_id, text, now)):
             call = (message.message_id, url, None)
         if call:
             await uow.messages.add_callback(*call)
@@ -222,14 +227,18 @@ class DLRHandler:
 
     @staticmethod
     def _kannel_url(
-        message: SMSMessage, smsc_id: str, text: str, now: datetime
+        message: SMSMessage, smsc_id: tp.Optional[str], text: str, now: datetime
     ) -> tp.Optional[str]:
-        """The expanded Kannel dlr-url for this final status, or None if none is due."""
-        bit = _DLR_BIT[message.status]
+        """The expanded Kannel dlr-url for this final status, or None if none is due.
+        No smsc_id: the SMSC never accepted it, %d=16, due on bit 2 or 16 (Kannel's)."""
+        if smsc_id is None:
+            bit, due = 16, 0x12
+        else:
+            bit = due = _DLR_BIT[message.status]
         if (
             message.protocol != 'kannel'
             or not message.dlr_url
-            or not message.protocol_data.get('dlr_mask', 0) & bit
+            or not message.protocol_data.get('dlr_mask', 0) & due
         ):
             return None
         return expand_url(
@@ -237,7 +246,7 @@ class DLRHandler:
             {
                 'd': str(bit),
                 'I': message.message_id,
-                'F': smsc_id,
+                'F': smsc_id or '',
                 'A': text,
                 't': now.strftime('%Y-%m-%d %H:%M'),
                 'T': str(int(now.timestamp())),

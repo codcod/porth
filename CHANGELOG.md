@@ -89,6 +89,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   entrypoint is `python`, so it runs both `bin/porth` and the one-off
   `python -m alembic upgrade head`. New Makefile targets `docker-build`, `fmt` and `perf`
   (a k6 check of `GET /health`) (POR-019).
+- The rest of Kannel's `sendsms` surface: `charset`, `coding`, `udh` (sent as one SMS with
+  the UDH indicator, never split), `mclass` 0–3 and `flash` with Kannel's `data_coding`
+  values, `validity` (minutes, as the message's `valid_until`), the `dlrmask`/`dlrurl`
+  aliases, and the `POST` form (`text/plain` or `application/octet-stream` body,
+  `X-Kannel-*` headers). A message that fails before the SMSC accepted it fetches `dlr-url`
+  with `%d=16` when `dlr-mask` has bit 2 or 16 (POR-005).
 
 **Changed**
 
@@ -132,6 +138,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and spaces are dropped, so `+30-694-1234567` routes like `306941234567`. Kannel matches the
   number as written. Log lines about an SMSC's bind, inbound stream or delivery engine start
   with `SMSC <name>:`, and its workers are named `<name>/worker-<n>` (POR-029).
+- Every Kannel `sendsms` answer is Kannel's own status and text, as `text/html`: `202`
+  `0: Accepted for delivery` on success (was `200`), and smsbox's `400` texts in place of
+  `3: Failed to send SMS: …`; a store failure is `503` `Temporal failure, try again later.`
+  An empty or absent `text` is now accepted, as in Kannel. `deferred`, `priority` and a
+  `dlr-mask` with none of bits 1, 2 and 16 are refused instead of ignored (POR-005).
 
 **Removed**
 
