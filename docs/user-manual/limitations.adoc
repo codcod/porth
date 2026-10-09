@@ -7,8 +7,10 @@ The ticket reference identifies the planned change.
 |===
 | Area | Current behaviour | Planned
 
-| Kannel-compatible `sendsms` API | `GET` only. Parameters beyond `to`, `from`, `text`,
-`dlr-url`, `dlr-mask`, `smsc` and the credentials are ignored. Response codes are not yet Kannel's exact table. | POR-005
+| Kannel-compatible `sendsms` API | `deferred` and `priority` are refused with Kannel's
+`400` `… field misformed, rejected`, not honoured. A `udh` with GSM coding is measured against
+160 characters, not the 140 octets less the UDH that one SMS holds, so a slightly long one may be
+refused by the SMSC rather than by {product}. | —
 | Security | No TLS: the Kannel API's credentials travel in clear over HTTP, and an
 `allow_ip` list is no substitute for a trusted network. The REST API has no authentication,
 nor do its `/metrics`, `/status` and `/ready` endpoints: keep the HTTP listener on a trusted

@@ -124,6 +124,46 @@ async def test_non_gsm_text_uses_ucs2(smpp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'text, protocol_data, payload, data_coding, esm_class',
+    [
+        # Kannel's chosen DCS: text still split by smppai on characters
+        ('Γ', {'data_coding': 0x18}, 'Γ', 0x18, 0),
+        # 8-bit, stored as hex, with the client's UDH: bytes, UDHI set
+        (
+            '',
+            {'data_coding': 0x04, 'udh': '050003a10201', 'data': '700070ff'},
+            bytes.fromhex('050003a10201700070ff'),
+            0x04,
+            0x40,
+        ),
+        # 8-bit without a UDH: the bytes, split by smppai if long
+        ('', {'data_coding': 0x04, 'data': '0100ff'}, b'\x01\x00\xff', 0x04, 0),
+        # UCS-2 class 1 with a UDH: the UDH, then the UTF-16BE text
+        (
+            'Γ',
+            {'data_coding': 0x19, 'udh': '050003a10201'},
+            bytes.fromhex('050003a102010393'),
+            0x19,
+            0x40,
+        ),
+        # no data_coding (REST, MO reply): porth's own choice, as before
+        ('Ж', {}, 'Ж', 0x08, 0),
+    ],
+)
+async def test_kannel_data_coding_and_udh_reach_submit_multipart(
+    smpp, text, protocol_data, payload, data_coding, esm_class
+):
+    message = msg(text)
+    message.protocol_data = protocol_data
+    await smpp.send_message(message)
+    submit = FakeSmppai.instances[0].submits[0]
+    assert submit['message'] == payload
+    assert submit['data_coding'] == data_coding
+    assert submit['esm_class'] == esm_class
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('text', ['a' * 160, 'Ж' * 70])
 async def test_one_segment_fits(smpp, text):
     await smpp.send_message(msg(text))

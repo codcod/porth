@@ -3,6 +3,7 @@
 import asyncio
 import re
 import types
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -259,6 +260,36 @@ async def test_kannel_failed_reports_2(store, handler, recorder):
     await handler.on_receipt(receipt('s1', MessageState.EXPIRED), 'a')
     await settle(handler)
     assert [r.query['d'] for r in recorder.requests] == ['2']
+
+
+@pytest.mark.asyncio
+# Kannel's: bit 2 or 16, not delivered-only 1 (checked against Kannel 1.4.5)
+@pytest.mark.parametrize(
+    'mask, calls', [(3, ['16']), (2, ['16']), (16, ['16']), (1, []), (0, [])]
+)
+async def test_kannel_never_accepted_reports_16(
+    store, handler, recorder, uow_factory, mask, calls
+):
+    # failed before the SMSC accepted it: no smsc_message_ids, no receipt
+    message = SMSMessage(
+        source_addr='A',
+        destination_addr='B',
+        message_text='hi',
+        protocol='kannel',
+        dlr_url=recorder.url(),
+        protocol_data={'dlr_mask': mask},
+        status=MessageStatus.FAILED,
+        smsc='a',
+    )
+    store.messages[message.message_id] = message
+    async with uow_factory() as uow:
+        call = await handler.finalize(uow, message, datetime.now(timezone.utc))
+        await uow.commit()
+    handler.dispatch(call)
+    await settle(handler)
+    assert [r.query['d'] for r in recorder.requests] == calls
+    if calls:
+        assert recorder.requests[0].query['f'] == ''
 
 
 @pytest.mark.asyncio
