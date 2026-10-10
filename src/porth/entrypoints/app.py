@@ -25,7 +25,7 @@ from porth.service_layer.unit_of_work import AbstractUnitOfWork, SqlAlchemyUnitO
 
 class Gateway:
     """Everything but the REST listener: recovery, handlers, the Kannel listener,
-    one delivery engine and SMPP client per SMSC."""
+    one delivery engine and SMPP client (two with transceiver = false) per SMSC."""
 
     def __init__(
         self,
@@ -47,6 +47,7 @@ class Gateway:
         self.mo_handler = MOHandler(self.queues, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
         self.smpp_clients: list[SMPPClient] = []
+        self.binds: dict[str, list[SMPPClient]] = {}  # per SMSC: one, or tx and rx
         # One engine (queue, workers, client) per SMSC, so a slow or down SMSC holds
         # up only its own messages. Clients are built here, so a bad throughput fails
         # before the store is read; started in start() before the workers, so a
@@ -54,12 +55,18 @@ class Gateway:
         # SMSC's name reaches receipts and MO through these callbacks.
         self.engines: dict[str, DeliveryEngine] = {}
         for name, config in settings.smsc.items():
-            smpp_client = SMPPClient(
-                name,
-                config,
-                on_receipt=functools.partial(self.dlr_handler.on_receipt, smsc=name),
-                on_mo=functools.partial(self.mo_handler.on_mo, smsc=name),
-            )
+            on_receipt = functools.partial(self.dlr_handler.on_receipt, smsc=name)
+            on_mo = functools.partial(self.mo_handler.on_mo, smsc=name)
+            if config.transceiver:
+                smpp_client = SMPPClient(name, config, on_receipt, on_mo)
+                self.binds[name] = [smpp_client]
+            else:
+                # The engine sends through tx; rx only binds and takes receipts and MO
+                smpp_client = SMPPClient(name, config, on_receipt, on_mo, bind='tx')
+                receiver = SMPPClient(
+                    name, config, on_receipt, on_mo, bind='rx', port=config.receive_port
+                )
+                self.binds[name] = [smpp_client, receiver]
             self.engines[name] = DeliveryEngine(
                 name,
                 smpp_client,
@@ -68,21 +75,25 @@ class Gateway:
                 settings,
                 self.dlr_handler,
             )
-            self.smpp_clients.append(smpp_client)
+            self.smpp_clients.extend(self.binds[name])
             # Read at scrape; a second gateway in one process (tests) rebinds them
             metrics.waiting.labels(name).set_function(self.queues[name].qsize)
             metrics.retrying.labels(name).set_function(
                 functools.partial(len, self.engines[name]._retries)
             )
             metrics.bound.labels(name).set_function(
-                functools.partial(getattr, smpp_client, 'connected')
+                functools.partial(self._bound, name)
             )
+
+    def _bound(self, name: str) -> bool:
+        """The SMSC is bound once all its binds are."""
+        return all(client.connected for client in self.binds[name])
 
     def smsc_state(self) -> dict[str, dict[str, tp.Any]]:
         """Per SMSC: bound, waiting and retrying, for /status and /ready."""
         return {
             name: {
-                'bound': engine.smpp_client.connected,
+                'bound': self._bound(name),
                 'waiting': engine.message_queue.qsize(),
                 'retrying': len(engine._retries),
             }
@@ -156,7 +167,7 @@ class Gateway:
             try:
                 await client.disconnect()
             except Exception as e:
-                logging.error(f'SMSC {client.name}: Error stopping SMPP client: {e}')
+                logging.error(f'SMSC {client.label}: Error stopping SMPP client: {e}')
 
         # Before the DLR handler, whose session dispatches the sweep's calls
         await self.sweeper.stop()

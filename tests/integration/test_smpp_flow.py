@@ -196,6 +196,69 @@ async def test_receipt_marks_message_delivered():
 
 
 @pytest.mark.asyncio
+async def test_tx_sends_rx_takes_the_receipt_and_tx_sends_without_rx():
+    """transceiver = false: submits go over the transmitter bind, the receipt comes
+    over the receiver bind, and a send still goes out with the receiver unbound."""
+    uow_factory = FakeUowFactory()
+    store = uow_factory.repo
+    port = free_port()
+    server = SMPPServer(host='127.0.0.1', port=port, setup_signal_handlers=False)
+    server.on_message_received = lambda server, session, pdu: 'smsc-1'
+
+    handler = DLRHandler(uow_factory)
+    config = SMPPClientConfig(
+        host='127.0.0.1', port=port, system_id='porth', password='pw', transceiver=False
+    )
+    on_receipt = functools.partial(handler.on_receipt, smsc='a')
+    tx = SMPPClient('a', config, on_receipt=on_receipt, bind='tx')
+    rx = SMPPClient('a', config, on_receipt=on_receipt, bind='rx')
+    engine = DeliveryEngine(
+        'a', tx, MessageQueue(), uow_factory, Settings(), DLRHandler(uow_factory)
+    )
+    first, second = (
+        SMSMessage(
+            source_addr='1234',
+            destination_addr='5678',
+            message_text=text,
+            protocol='http',
+            smsc='a',
+        )
+        for text in ('one', 'two')
+    )
+    await store.add(first)
+    await store.add(second)
+
+    await server.start()
+    await handler.start()
+    try:
+        await rx.connect()
+        await engine._process_message(first)
+        binds = sorted(s.bind_type for s in server.get_client_sessions())
+        assert binds == ['receiver', 'transmitter']
+        assert await server.deliver_sm(
+            'porth',
+            source_addr='5678',
+            destination_addr='1234',
+            short_message=RECEIPT,
+            esm_class=0x04,
+        )
+        async with asyncio.timeout(5):
+            while store.messages[first.message_id].status == MessageStatus.SENT:
+                await asyncio.sleep(0.01)
+            await asyncio.gather(*handler._tasks)
+        assert store.messages[first.message_id].status == MessageStatus.DELIVERED
+
+        await rx.disconnect()
+        await engine._process_message(second)
+        assert store.messages[second.message_id].status == MessageStatus.SENT
+    finally:
+        await tx.disconnect()
+        await rx.disconnect()
+        await handler.stop()
+        await server.stop()
+
+
+@pytest.mark.asyncio
 async def test_receipt_calls_kannel_dlr_url():
     requests = []
 

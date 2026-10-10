@@ -116,8 +116,9 @@ max_retry_delay = 300
 worker_count = 10
 ```
 
-Each `[porth.smsc.<name>]` is an upstream SMSC. porth binds to each as a transceiver, with
-its own queue, workers and `throughput` cap. A message goes out through the SMSC of the
+Each `[porth.smsc.<name>]` is an upstream SMSC. porth binds to each as a transceiver (or,
+with `transceiver = false`, a transmitter and a receiver), with its own queue, workers and
+`throughput` cap. A message goes out through the SMSC of the
 longest `[porth.routing.prefixes]` entry its number starts with (digits only), else
 the `default`; a number nothing routes is refused at submit. It is sent as one `submit_sm`
 per part, and marked `sent` once the SMSC accepts every part. If the SMSC is unreachable, the gateway still starts and retries the bind every

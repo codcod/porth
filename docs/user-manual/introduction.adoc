@@ -9,7 +9,8 @@
 The minimum viable product covers:
 
 * SMS submission over a plain HTTP/REST API and a Kannel-compatible `sendsms` API.
-* Delivery to one upstream SMSC over a single SMPP transceiver bind.
+* Delivery to one upstream SMSC over an SMPP transceiver bind, or a transmitter and a
+  receiver bind.
 * An in-process queue with retries on delivery failure.
 * Delivery receipts (DLRs) correlated back to the submitting client: a status the HTTP client
   polls or has posted to its `callback_url`, or a callback to a Kannel client's `dlr-url`.
@@ -48,7 +49,7 @@ flowchart TB
         MO["MO handler"]
     end
     subgraph Egress
-        SMPP_Client["SMPP client (one bind to the SMSC)"]
+        SMPP_Client["SMPP client (a transceiver, or a transmitter and a receiver bind)"]
     end
     KannelTarget["Kannel client's dlr-url"]
     RestTarget["HTTP client's callback_url"]
@@ -69,4 +70,5 @@ flowchart TB
 ....
 
 SMPP is only an egress protocol: {product} sends `submit_sm` to the SMSC and receives
-`deliver_sm` receipts and MO on the same bind. It never accepts `submit_sm` from anyone else.
+`deliver_sm` receipts and MO on the same bind (or, with `transceiver = false`, on a
+separate receiver bind). It never accepts `submit_sm` from anyone else.

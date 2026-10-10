@@ -108,8 +108,10 @@ Spaces and `-` in numbers are ignored.
 
 == The SMSC bind
 
-{product} opens one transceiver bind to each configured SMSC. What follows holds for each
-bind on its own.
+{product} opens one transceiver bind to each configured SMSC, or, with
+`transceiver = false`, a transmitter bind and a receiver bind. What follows holds for each
+bind on its own. While the receiver bind is down, sends go on and the SMSC holds the
+receipts and MO until it is back. While the transmitter bind is down, sends are retried.
 
 * If the bind fails at startup, the gateway still starts and retries the bind every 10 s.
 * A bind that is lost, or that the SMSC unbinds, is reopened within 10 s, even when nothing

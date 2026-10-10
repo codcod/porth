@@ -47,6 +47,9 @@ reply = true
 # password = "secret"
 # system_type = ""
 # throughput = 50  # submit_sm PDUs/s; unset = unlimited
+# For an SMSC without transceiver binds: a transmitter and a separate receiver bind.
+# transceiver = false
+# receive_port = 2776  # the receiver's port; unset = port
 
 # Which SMSC a number goes out through: the longest matching prefix (digits, matched
 # without a leading +), else default.

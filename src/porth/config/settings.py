@@ -43,6 +43,10 @@ class SMPPClientConfig:
     system_type: str = ''
     # ponytail: int, so at least 1/s; sub-1 TPS needs a float
     throughput: tp.Optional[int] = None  # submit_sm PDUs/s; unset = unlimited
+    # false: a transmitter bind sends, a receiver bind (receive_port, default port)
+    # takes receipts and MO, as Kannel's transceiver-mode = false and receive-port
+    transceiver: bool = True
+    receive_port: tp.Optional[int] = None
 
 
 @dataclasses.dataclass(kw_only=True)
