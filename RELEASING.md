@@ -2,7 +2,7 @@
 
 Releases are cut by hand. There is no release CI and no semantic-release. To cut one:
 
-1. Bump `version` in `pyproject.toml` (currently `0.1.0`).
+1. Bump `version` in `pyproject.toml` (currently `0.2.0`).
 2. Add a dated entry to `CHANGELOG.md`.
 3. Update the user manual (`docs/user-manual/`) for whatever changed. Run `make docs-check`.
 4. Commit the changes.
