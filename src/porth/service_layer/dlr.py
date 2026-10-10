@@ -47,6 +47,11 @@ def expand_url(url: str, values: tp.Mapping[str, str | bytes]) -> str:
     return re.sub(f'%([{re.escape("".join(values))}%])', code, url)
 
 
+def _plus(number: str) -> str:
+    """Kannel's %q/%Q: a leading 00 written as +."""
+    return '+' + number[2:] if number.startswith('00') else number
+
+
 class DLRHandler:
     """Moves a message to its final status from receipts; every final status, whatever
     sets it, is written through finalize(), which stores the call it is due."""
@@ -248,9 +253,13 @@ class DLRHandler:
                 'I': message.message_id,
                 'F': smsc_id or '',
                 'A': text,
-                't': now.strftime('%Y-%m-%d %H:%M'),
+                't': now.strftime('%Y-%m-%d %H:%M:%S'),
                 'T': str(int(now.timestamp())),
                 'i': message.smsc or '',
+                'p': message.destination_addr,
+                'P': message.source_addr,
+                'q': _plus(message.destination_addr),
+                'Q': _plus(message.source_addr),
             },
         )
 

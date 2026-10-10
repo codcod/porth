@@ -31,11 +31,13 @@ def sent(
     dlr_mask=0,
     callback_url=None,
     idempotency_key=None,
+    source_addr='A',
+    destination_addr='B',
 ):
     """A sent message in the repository; returns a reader of its stored row."""
     message = SMSMessage(
-        source_addr='A',
-        destination_addr='B',
+        source_addr=source_addr,
+        destination_addr=destination_addr,
         message_text='hi',
         protocol=protocol,
         dlr_url=dlr_url,
@@ -252,6 +254,42 @@ async def test_dlr_url_percent_i_is_the_smsc(store, handler, recorder):
     await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     assert [dict(r.query) for r in recorder.requests] == [{'i': 'a'}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'state, d', [(MessageState.DELIVERED, '1'), (MessageState.UNDELIVERABLE, '2')]
+)
+@pytest.mark.parametrize(
+    'source, destination, numbers',
+    [  # Kannel 1.4.5's own dlr-url, measured (POR-017)
+        ('ACME', '306900003001', ('306900003001', 'ACME', '306900003001', 'ACME')),
+        ('+441234', '+306900003002', ('+306900003002', '+441234') * 2),
+        (
+            '+441234',
+            '00306900003003',
+            ('00306900003003', '+441234', '+306900003003', '+441234'),
+        ),
+    ],
+)
+async def test_dlr_url_numbers_and_seconds_are_kannels(
+    store, handler, recorder, state, d, source, destination, numbers
+):
+    url = recorder.url('d=%d&p=%p&P=%P&q=%q&Q=%Q&t=%t')
+    sent(
+        store,
+        ['s1'],
+        'kannel',
+        url,
+        3,
+        source_addr=source,
+        destination_addr=destination,
+    )
+    await handler.on_receipt(receipt('s1', state), 'a')
+    await settle(handler)
+    query = dict(recorder.requests[0].query)
+    assert re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d', query.pop('t'))
+    assert query == dict(zip('dpPqQ', (d, *numbers)))
 
 
 @pytest.mark.asyncio

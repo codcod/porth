@@ -216,13 +216,17 @@ and 8 (SMSC buffered and accepted) are never produced.
 | `%I` | {product}'s message id, as returned in `Message-ID`.
 | `%F` | The SMSC message id of the part whose receipt settled the message. Empty for `%d=16`.
 | `%A` | The receipt text the SMSC sent.
-| `%t` | The receipt's arrival time in UTC, as `YYYY-MM-DD HH:MM`.
+| `%t` | The receipt's arrival time in UTC, as `YYYY-MM-DD HH:MM:SS`.
 | `%T` | The receipt's arrival time as a UNIX timestamp.
 | `%i` | The name of the SMSC the message went out through.
+| `%p` | The message's recipient, as written in `to` (a leading `+` kept).
+| `%P` | The message's sender, as written in `from`, or `kannel.default_sender` without it.
+| `%q` | `%p` with a leading `00` written as `+`.
+| `%Q` | `%P` with a leading `00` written as `+`.
 | `%%` | A literal `%`.
 |===
 
-Any other `%` code, such as `%p` or `%P`, is left as written. As in Kannel, a code is
+Any other `%` code, such as `%s`, is left as written. As in Kannel, a code is
 replaced even when it is part of a percent-encoding, so write a literal `%` in `dlr-url` as
 `%%` (for example `caf%%C3%%A9`).
 

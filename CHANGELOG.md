@@ -95,6 +95,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   aliases, and the `POST` form (`text/plain` or `application/octet-stream` body,
   `X-Kannel-*` headers). A message that fails before the SMSC accepted it fetches `dlr-url`
   with `%d=16` when `dlr-mask` has bit 2 or 16 (POR-005).
+- `dlr-url` substitutes `%p` (the recipient) and `%P` (the sender), as the client wrote them,
+  and `%q`/`%Q` (the same with a leading `00` written as `+`), as Kannel 1.4.5 does in a
+  delivery report (POR-017).
 
 **Changed**
 
@@ -143,6 +146,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `3: Failed to send SMS: …`; a store failure is `503` `Temporal failure, try again later.`
   An empty or absent `text` is now accepted, as in Kannel. `deferred`, `priority` and a
   `dlr-mask` with none of bits 1, 2 and 16 are refused instead of ignored (POR-005).
+- `%t` in `dlr-url` has seconds, `YYYY-MM-DD HH:MM:SS`, as in Kannel (was `HH:MM`) (POR-017).
 
 **Removed**
 
