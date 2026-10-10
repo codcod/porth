@@ -75,7 +75,8 @@ points at `make db-up`'s database. `make migrate` reads it from the same file.
 
 == SMSCs
 
-Each `[porth.smsc.<name>]` table is one SMSC {product} binds to, as a transceiver. The name
+Each `[porth.smsc.<name>]` table is one SMSC {product} binds to, by default as a
+transceiver. The name
 is the table's key, such as `op-a` in `[porth.smsc.op-a]`, and may not be empty. It appears
 in the logs, in the routing rules, in the Kannel `smsc` parameter and as `%i`.
 
@@ -91,6 +92,11 @@ in the logs, in the routing rules, in the Kannel `smsc` parameter and as `%i`.
 | `throughput` | unset | Most `submit_sm` PDUs this SMSC gets in any one second: the
 operator's contracted rate. A concatenated message counts once per part. Unset: unlimited.
 At least `1`. See <<Throughput cap>>.
+| `transceiver` | `true` | `false`: for an SMSC without transceiver binds, {product} opens a
+transmitter bind for `submit_sm` and a separate receiver bind for receipts and MO, with the
+same `system_id`, `password` and `system_type`. Kannel's `transceiver-mode`.
+| `receive_port` | `port` | The receiver bind's port, read only with `transceiver = false`.
+Kannel's `receive-port`.
 |===
 
 == Kannel users

@@ -98,6 +98,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `dlr-url` substitutes `%p` (the recipient) and `%P` (the sender), as the client wrote them,
   and `%q`/`%Q` (the same with a leading `00` written as `+`), as Kannel 1.4.5 does in a
   delivery report (POR-017).
+- An SMSC without transceiver support: `transceiver = false` in `[porth.smsc.<name>]` gives
+  it a transmitter bind for sends and a receiver bind for receipts and MO, on
+  `receive_port` (default `port`), with the same credentials, as Kannel's
+  `transceiver-mode = false` and `receive-port`. Each rebinds on its own; the SMSC counts as
+  bound in `/ready`, `/status` and `porth_smsc_bound` only while both are (POR-023).
 
 **Changed**
 

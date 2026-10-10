@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from prometheus_client import REGISTRY
+
 from porth.config.settings import (
     DeliveryConfig,
     HTTPConfig,
@@ -221,6 +223,25 @@ def test_each_smsc_gets_its_own_throughput(uow_factory):
     assert a is not None and a._pacer is not None and a._pacer.rate == 5
     assert b is not None and b._pacer is None
     assert gateway.smpp_clients == [a, b]
+
+
+def test_no_transceiver_gives_a_tx_and_an_rx_bind_both_needed_for_bound(
+    uow_factory, monkeypatch
+):
+    settings = two_smscs()
+    settings.smsc['a'] = smsc(port=2775, transceiver=False, receive_port=2776)
+    gateway = Gateway(settings, uow_factory)
+    tx, rx, b = gateway.smpp_clients
+    assert gateway.engines['a'].smpp_client is tx
+    assert (tx.bind, tx.port, rx.bind, rx.port) == ('tx', 2775, 'rx', 2776)
+    assert (b.bind, gateway.engines['b'].smpp_client) == ('trx', b)
+    assert gateway.binds == {'a': [tx, rx], 'b': [b]}
+
+    # rx down: a is not bound, for /status, /ready and porth_smsc_bound alike
+    monkeypatch.setattr(type(rx), 'connected', property(lambda c: c is not rx))
+    state = gateway.smsc_state()
+    assert (state['a']['bound'], state['b']['bound']) == (False, True)
+    assert REGISTRY.get_sample_value('porth_smsc_bound', {'smsc': 'a'}) == 0
 
 
 def test_zero_throughput_fails_the_gateway(uow_factory):

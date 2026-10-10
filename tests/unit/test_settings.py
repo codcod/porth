@@ -46,6 +46,8 @@ system_id = "p"
 password = "s"
 system_type = "VMA"
 throughput = 50
+transceiver = false
+receive_port = 2777
 [porth.smsc.op-b]
 host = "smsc-b"
 system_id = "q"
@@ -84,6 +86,8 @@ ignored = true
     assert (a.host, a.port, a.system_id, a.password) == ('smsc', 2776, 'p', 's')
     assert (a.system_type, a.throughput) == ('VMA', 50)
     assert (b.host, b.port, b.system_type, b.throughput) == ('smsc-b', 2775, '', None)
+    assert (a.transceiver, a.receive_port) == (False, 2777)
+    assert (b.transceiver, b.receive_port) == (True, None)
     assert settings.routing.default == 'op-a'
     assert settings.routing.prefixes == {'4470': 'op-b'}
     d = settings.delivery
@@ -125,6 +129,11 @@ def test_unknown_key_raises_naming_it(tmp_path, text, key):
             '[porth.smsc.a]\nhost = "h"\nsystem_id = "p"\npassword = "s"\n'
             'port = 2775.0\n',
             'porth.smsc.a.port',
+        ),
+        (
+            '[porth.smsc.a]\nhost = "h"\nsystem_id = "p"\npassword = "s"\n'
+            'receive_port = "x"\n',
+            'porth.smsc.a.receive_port',
         ),
         ('[porth]\nsmsc = 1\n', 'porth.smsc'),
         ('[porth.smsc]\na = 1\n', 'porth.smsc.a'),

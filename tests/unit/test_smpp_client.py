@@ -1,6 +1,7 @@
 """Unit tests for the SMPP client (smppai faked)."""
 
 import asyncio
+import contextlib
 from datetime import datetime
 
 import pytest
@@ -182,6 +183,40 @@ async def test_more_than_255_parts_fails_before_network(smpp):
     with pytest.raises(MessageError):
         await smpp.send_message(msg('a' * (153 * 255 + 1)))
     assert FakeSmppai.instances == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('kwargs', 'bind', 'port', 'label'),
+    [
+        ({}, 'trx', 1, 's'),
+        ({'bind': 'tx'}, 'tx', 1, 's (tx)'),
+        ({'bind': 'rx', 'port': 2}, 'rx', 2, 's (rx)'),
+    ],
+)
+async def test_connect_binds_as_bind_on_port(monkeypatch, kwargs, bind, port, label):
+    calls = []
+
+    @contextlib.asynccontextmanager
+    async def connect(host, port, system_id, password, *, bind, **kw):
+        calls.append((port, bind))
+        yield FakeInbound()
+
+    monkeypatch.setattr(client_module.smpp, 'connect', connect)
+    config = SMPPClientConfig(host='h', port=1, system_id='s', password='p')
+    client = SMPPClient('s', config, **kwargs)
+    await client.connect()
+    assert calls == [(port, bind)]
+    assert (client.name, client.label) == ('s', label)  # name: the metric label
+    await client.disconnect()
+
+
+class FakeInbound:
+    raw = None
+
+    async def messages(self):
+        return
+        yield
 
 
 @pytest.mark.asyncio
