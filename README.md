@@ -2,7 +2,8 @@
 
 An async Python SMS Gateway designed for high-performance, cloud-native
 telecommunications infrastructure. Serves a Kannel-compatible `sendsms` API, so existing
-Kannel HTTP clients can switch to porth unmodified by changing only the host (port 13013).
+Kannel `sendsms` clients can switch to porth by changing only the host (port 13013), apart
+from the differences the user manual's *porth and Kannel* chapter lists.
 
 The user manual (`docs/`, built with `make docs-build`) is attached as PDF and EPUB to every
 GitHub release.
