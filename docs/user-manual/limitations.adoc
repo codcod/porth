@@ -1,7 +1,7 @@
 = Limitations
 
 {product}'s design commits to the following, but this release does not implement them yet.
-The ticket reference identifies the planned change.
+The Planned column names the ticket for a planned change, or `—` where none is planned yet.
 
 [cols="3,5,1",options="header"]
 |===

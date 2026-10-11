@@ -35,7 +35,8 @@ make run        # bin/porth config/config.toml
 ----
 
 The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).
-It starts even when the SMSC is unreachable; the first send retries the bind. It does not
+It starts even when an SMSC is unreachable, and retries the bind every 10 s (see
+<<The SMSC bind>>). It does not
 start without its database: an unset `db` or an unreachable PostgreSQL stops it with an
 error.
 
