@@ -157,7 +157,7 @@ The checks run in this order, so a request gets the first answer that applies.
 Each `[porth.kannel.users.<username>]` table is one caller, the equivalent of a Kannel
 `sendsms-user` group. See <<Kannel users>>. A request must carry a configured `username` (else
 `user`) and its `password` (else `pass`), and come from an address in that user's `allow_ip`,
-if it has one. Otherwise {product} answers as Kannel does, `403` with the `text/plain` body:
+if it has one. Otherwise {product} answers as Kannel does, `403` with the `text/html` body:
 
 ----
 Authorization failed for sendsms

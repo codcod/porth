@@ -67,7 +67,7 @@ make help
 
 ## Layout
 
-The code follows the monolith's traffic service (design.md §4.6). Under `src/porth/`:
+The code follows the layering of the monolith's traffic service. Under `src/porth/`:
 `domain/` holds the message model, with no I/O. `adapters/` holds the PostgreSQL tables and
 repository, the SMPP client, the in-process queue, and the outbound HTTP client for DLR and
 MO calls. `service_layer/` holds the unit of work, the delivery engine, the receipt, MO and
