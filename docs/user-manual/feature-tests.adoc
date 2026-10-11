@@ -1,0 +1,99 @@
+= Feature tests
+
+{product}'s source tree includes one end-to-end test for each feature listed in this chapter,
+in `tests/integration/test_features.py`. Each test starts {product} the way `bin/porth` does,
+from a configuration file, against a real PostgreSQL. It then drives {product} only from
+outside:
+
+* over the HTTP API and the Kannel-compatible API;
+* with test SMSCs that {product} binds to over real SMPP connections;
+* with test servers that receive the `dlr-url`, `callback_url` and `mo.url` requests;
+* by reading `/metrics`.
+
+A test passes only on what a client, an SMSC or an application would see. It never looks
+inside {product} or at its database.
+
+== What each test proves
+
+[cols="2,3,5",options="header"]
+|===
+| Feature | Test | What it proves
+
+| Kannel `sendsms` | `test_kannel_client_sends_to_two_numbers_and_gets_a_dlr_url_call_for_each`
+| A configured user's `GET` with two numbers in `to` gets `202` with a `Message-ID` line for
+each. The SMSC receives one `submit_sm` per number. After each receipt, `dlr-url` is fetched
+once, with `%d`, `%I`, `%p` and `%F` filled in.
+| Kannel `sendsms` | `test_kannel_post_is_sent_and_a_refused_caller_gets_kannels_403`
+| The `POST` form with `X-Kannel-*` headers is sent. A wrong password, and a caller outside
+the user's `allow_ip`, both get `403 Authorization failed for sendsms`, and their messages
+never reach the SMSC.
+| Reliable delivery | `test_message_taken_while_the_smsc_is_down_is_retried_and_delivered`
+| A message submitted while the SMSC is unreachable is accepted and stays `queued`. It is
+retried, and once the SMSC is up it is sent exactly once and ends `delivered`.
+| Reliable delivery | `test_queued_message_survives_a_restart_and_is_sent_once`
+| A message still `queued` when {product} stops is sent once by the next {product} started on
+the same database. Its `callback_url` gets `delivered` after the receipt.
+| Reliable delivery | `test_message_the_smsc_rejects_fails_at_once_and_its_dlr_url_gets_16`
+| A message the SMSC rejects with a permanent error ends `failed` without a retry. Its
+`dlr-url` is fetched with `%d=16`.
+| Routing | `test_each_number_reaches_the_smsc_its_longest_prefix_names`
+| Each number reaches the SMSC of its longest matching prefix, else `routing.default`. A
+Kannel `smsc` overrides the prefixes, and one naming no configured SMSC is refused. Without a
+default, an unroutable number gets `400` from the HTTP API and `403 Not routable` from the
+Kannel API.
+| Throughput cap | `test_smsc_never_gets_more_than_its_throughput_in_any_second`
+| With `throughput = 2`, every three consecutive `submit_sm` reach the SMSC at least a second
+apart (less a little timing jitter), so it never gets more than two in a second.
+| Separate binds | `test_without_transceiver_sends_on_the_transmitter_and_receipts_on_the_receiver`
+| With `transceiver = false`, {product} opens a transmitter and a receiver bind. Messages go
+out on the transmitter, and a receipt arriving on the receiver marks the message `delivered`.
+| HTTP API | `test_rest_submit_repeated_with_its_key_is_sent_once_and_reported_once`
+| A submit repeated with the same `idempotency_key` returns the first message and sends
+nothing new. The status moves from `queued` through `sent` to `delivered`. `callback_url`
+receives one `POST` with `message_id`, `status`, `occurred_at` and `idempotency_key`.
+| HTTP API | `test_high_priority_rest_message_overtakes_waiting_normal_ones`
+| A `high` message reaches the SMSC ahead of the `normal` messages still waiting in the
+queue, and the `normal` ones keep their order.
+| Two-way SMS | `test_mo_reaches_the_application_and_its_reply_reaches_the_subscriber`
+| An MO from the SMSC is fetched from `mo.url` with `%p` and `%a` filled in. The
+application's plain-text answer goes back to the subscriber as an SMS from the number the MO
+was sent to.
+| Long SMS | `test_long_messages_go_out_in_parts_and_are_delivered_on_every_part`
+| A 200-character GSM text and a 100-character UCS-2 text each go out as two concatenated
+parts sharing one reference, with `data_coding` `0` and `8`. A message stays `sent` until
+every part has its receipt, then becomes `delivered`, and its `callback_url` is called once.
+|===
+
+== Running the tests
+
+The tests need PostgreSQL. They create and use their own `porth_test` database, and empty its
+tables before each test, so never point them at a database holding real messages.
+
+[source,bash]
+----
+make db-up
+make test-integration                     # every PostgreSQL test, these included
+----
+
+To run only these tests, against a database elsewhere:
+
+[source,bash]
+----
+RUN_INTEGRATION_TESTS=1 \
+TEST_PORTH_DB=postgresql+asyncpg://porth:porth@localhost:5432/porth_test \
+uv run pytest tests/integration/test_features.py -v
+----
+
+They take about 15 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
+`make test` does not run them.
+
+== What the tests do not prove
+
+* **Throughput under load.** The tests send a handful of messages. The k6 script in
+  `tests/performance/k6` (`make perf`) measures a running {product}.
+* **The restart window.** A message sent again after a crash, and a receipt lost from memory
+  at a crash, are known limitations, not features. See <<Limitations>>.
+* **Real operators.** The test SMSCs follow SMPP 3.4 as smppai implements it. An operator's
+  SMSC may differ, for example in the format of its receipt ids (see <<Delivery receipts>>).
+* **Features {product} does not have,** such as TLS and failover between SMSCs. See
+  <<porth and Kannel>> and <<Limitations>>.

@@ -21,4 +21,6 @@ include::user-manual/kannel-comparison.adoc[leveloffset=+1]
 
 include::user-manual/delivery.adoc[leveloffset=+1]
 
+include::user-manual/feature-tests.adoc[leveloffset=+1]
+
 include::user-manual/limitations.adoc[leveloffset=+1]

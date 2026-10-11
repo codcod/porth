@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - User manual chapter *porth and Kannel*: Kannel 1.4.5 and porth side by side, area by area,
   with a verdict on when porth is a drop-in replacement (POR-030).
+- End-to-end tests of the five headline features (Kannel `sendsms`, reliable delivery, routing
+  across SMSCs, the REST API, two-way and long SMS) in `tests/integration/test_features.py`,
+  and a user manual chapter, *Feature tests*, saying what each proves and how to run them
+  (POR-031).
 
 ## [0.2.0] - 2026-10-10
 
