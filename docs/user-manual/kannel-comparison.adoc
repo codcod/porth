@@ -1,0 +1,231 @@
+= porth and Kannel
+
+This chapter sets {product} beside Kannel 1.4.5, feature by feature, so you can judge whether
+{product} can replace your Kannel. It covers Kannel's SMS features only: WAP (wapbox, WAP push)
+is left out.
+
+== Is porth a drop-in replacement?
+
+**For an application, yes,** when it talks to Kannel only through:
+
+* `sendsms`, by `GET` or by `POST` with `X-Kannel-*` headers;
+* `dlr-url` callbacks for delivered (`1`), not delivered (`2`) and rejected (`16`) outcomes;
+* one MO service that Kannel fetches with `get-url` and whose plain-text answer is the reply;
+
+and Kannel reaches its operators over SMPP 3.4. Such an application keeps working when
+pointed at {product}, apart from these differences:
+
+* `deferred` and `priority` are refused with `400`.
+* `flash=1` sends a flash SMS, and text GSM can't carry goes out as UCS-2 instead of with `?`.
+* A long message gets one delivery report, not one per part.
+* A `dlr-mask` without a `dlr-url` gets no callback: there is no per-user default `dlr-url`.
+* An `smsc` naming an SMSC {product} doesn't have is refused with `403 Not routable`, where
+  Kannel routes the message by its rules.
+* An MO reply goes out through the SMSC the MO came on, and a long one is sent whole, where
+  Kannel's default sends one SMS.
+
+The tables below list every difference, and <<Differences from Kannel 1.4.5>> details the
+`sendsms` ones.
+
+**For the Kannel deployment itself, no.** The operator side changes:
+
+* The configuration is rewritten. {product} reads its own TOML file and does not import
+  `kannel.conf`. Routing lists become one prefix table (see <<Routing rules>>).
+* SMSCs are SMPP 3.4 only. EMI/UCP, CIMD2, HTTP relays, GSM modems and the other Kannel
+  drivers have no equivalent.
+* There is no admin interface. Monitoring moves to `/metrics`, `/status` and `/ready` (see
+  <<Monitoring>>), and links can't be stopped, started or reloaded at runtime.
+* {product} never accepts SMPP binds, so it can't take the place of opensmppbox.
+* There is no TLS on any listener or SMSC link. Both are scope decisions (see <<Scope>>), and
+  <<Limitations>> lists what is not built yet.
+* Applications that rely on `post-url`, MO keywords, `deferred`, `priority` or per-user
+  settings (`forced-smsc`, `max-messages`, white and black lists) need changes.
+
+The tables below give the details. The verdict column reads:
+
+* **Same**: works as in Kannel.
+* **Different**: supported, with a difference an application or operator can notice.
+* **Not supported**: Kannel has it, {product} does not.
+* **porth only**: {product} has it, Kannel does not.
+
+== Sending (`sendsms`)
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| `GET /cgi-bin/sendsms` on port 13013 | Yes | Yes, on `kannel.port` | Same
+| `POST` with `X-Kannel-*` headers | Yes | Yes, `text/plain` and `application/octet-stream`
+bodies | Same
+| XML `POST` (`text/xml`) | Yes, experimental | Refused, `400 Invalid content-type` | Not
+supported
+| `username`/`password` (and `user`/`pass`) | Required | Checked once users are configured.
+With none, `sendsms` is open (see <<Authentication>>) | Different
+| `user-allow-ip`, `user-deny-ip` | Patterns with `*` | `allow_ip`: addresses and CIDR
+networks, no deny list | Different
+| Several numbers in `to` | Yes | Yes, one message and one `Message-ID` line each | Same
+| `from`, `global-sender` | Yes | `from`, else `kannel.default_sender` | Same
+| `text`, `charset`, `coding`, `udh` | Yes | Yes | Same
+| Text GSM can't carry, no `coding` | Sent as GSM, with `?` for each such character | Sent as
+UCS-2 | Different
+| `mclass` | Yes | Yes, Kannel's data codings | Same
+| `flash` | Ignored | Sent as a flash SMS (`mclass=0`) | Different
+| `validity` | Yes | Yes | Same
+| `dlr-mask`, `dlr-url` (and `dlrmask`, `dlrurl`) | Yes | Yes. A mask {product} can never
+answer is refused (see <<Delivery reports>>) | Different
+| `smsc` | A hint the routing lists can overrule | Always wins. An unknown name is `403 Not
+routable` | Different
+| `deferred`, `priority` | Honoured | Refused with `400` | Not supported
+| Long text | Split by `max-messages` and `concatenation` | Always concatenated, up to 255
+parts | Different
+| Answer to an accepted request | `0: Accepted for delivery`, or `3: Queued for later
+delivery` | Always `0: Accepted for delivery`, plus `Message-ID` lines | Different
+| Error answers (`4xx`, `503`) | smsbox's status and text | The same status and text (see
+<<Responses>>) | Same
+| `mwi`, `compress`, `alt-dcs`, `pid`, `rpi`, `account`, `binfo`, `meta-data` | Yes | Ignored |
+Not supported
+| Per-user `forced-smsc`, `default-smsc`, `faked-sender`, `max-messages`, `split-chars`,
+`header`/`footer`, prefix filters, white and black lists, default `dlr-url` | Yes | No | Not
+supported
+| `sendsms-url`, `sendsms-chars`, `sms-length` | Configurable | Fixed: `/cgi-bin/sendsms`,
+`0123456789+-` | Not supported
+| HTTPS listener (`sendsms-port-ssl`) | Yes | No | Not supported
+| OTA push (`/cgi-bin/sendota`) | Yes | No | Not supported
+|===
+
+== Delivery reports
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| `dlr-mask` bits `1`, `2`, `16` | Yes | Yes | Same
+| `dlr-mask` bits `4` (buffered), `8` (accepted by the SMSC) | Yes | Never produced | Not
+supported
+| `dlr-url` fetched by `GET`, `https` included | Yes | Yes, 3 attempts | Same
+| Escape codes `%d %I %F %A %t %T %i %p %P %q %Q` | Yes | Yes | Same
+| Other escape codes (`%n`, `%c`, `%m`, `%b`, `%s` and the rest) | Yes | Left as written |
+Not supported
+| Long message | One report per part | One report per message | Different
+| DLR storage | In memory unless `dlr-storage` names a store | Always in PostgreSQL | Different
+| Message with no receipt | Waits indefinitely | `expired` after `store.dlr_timeout_hours`,
+with no `dlr-url` fetch | porth only
+| `flush-dlr`, `reroute-dlr` | Yes | No | Not supported
+|===
+
+== Mobile-originated messages
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| MO fetched from an application URL | `sms-service` `get-url` | `mo.url` | Same
+| MO escape codes `%p %P %k %r %a %b %t %T %c %C %i` | Yes | Yes, byte for byte | Same
+| Other MO escape codes (`%s`, `%S`, `%u` and the rest) | Yes | Left as written | Not supported
+| Concatenated MO reassembled | Yes | Yes | Same
+| Plain-text answer sent back as the reply | Routed like any message, one SMS by default
+(`max-messages = 1`) | Sent through the SMSC the MO came on, whole, as a concatenated SMS
+(see <<Replies>>) | Different
+| Several services by keyword, `aliases`, `catch-all` | Yes | One URL takes every MO | Not
+supported
+| `post-url`, `post-xml`, `X-Kannel-*` reply headers | Yes | No | Not supported
+| `text`, `file` and `exec` services | Yes | No | Not supported
+| Retry of a failed application request | `http-request-retry` | Not retried: at most once
+(see <<Delivery guarantee>>) | Not supported
+| Service filters, reply shaping, canned error replies | Yes | No | Not supported
+|===
+
+== Routing and SMSC links
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| Several SMSCs | `smsc` groups with `smsc-id` | `[porth.smsc.<name>]` tables, each with its
+own queue and workers | Same
+| Routing by destination prefix | Per-SMSC `allowed-`, `denied-` and `preferred-prefix`
+lists | One prefix table, longest match wins, plus `routing.default` (see <<Routing rules>>)
+| Different
+| Routing by SMSC id (`allowed-smsc-id` and the rest) | Yes | Only through `sendsms`'s `smsc` |
+Different
+| `unified-prefix` number rewriting | Yes | No | Not supported
+| Several binds to one SMSC, load-balanced | Yes | One bind per SMSC | Not supported
+| Fail over to another SMSC | Through routing lists | No: a message keeps the SMSC it was
+routed to at submit (see <<Routing>>) |
+Not supported
+| `throughput` per SMSC | Yes | Yes, in `submit_sm` PDUs per second | Same
+| Reconnect after a dropped bind | `reconnect-delay`, 10 s by default | Every 10 s, not
+configurable | Different
+| `reroute`, loopback, `smsbox-route` | Yes | No | Not supported
+|===
+
+== SMSC protocols and SMPP options
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| SMPP 3.4 | Yes | Yes | Same
+| SMPP 3.3 and 5.0 | Yes | No | Not supported
+| EMI/UCP, CIMD2, OIS, SMASI, HTTP relay, Parlay X, GSM modem (`at`) | Yes | No | Not
+supported
+| Accept SMPP binds (SMSC role) | opensmppbox add-on | No, by design | Not supported
+| Transceiver bind | `transceiver-mode` | Yes, the default | Same
+| Separate transmitter and receiver binds | `receive-port` | `transceiver = false`,
+`receive_port` | Same
+| `system-type` | Defaults to `VMA` | Defaults to empty | Different
+| Source and destination TON/NPI | Fixed or autodetected | Autodetected only | Different
+| SMPP over TLS (`use-ssl`) | Yes | No | Not supported
+| `enquire-link-interval`, `max-pending-submits`, `connection-timeout`, `msg-id-type`,
+`service-type`, `address-range`, `esm-class`, `alt-charset` | Configurable | Fixed defaults |
+Not supported
+|===
+
+== Reliability and storage
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| Messages kept across a crash | Only with a configured `store-type` | Always, in PostgreSQL
+(see <<What a restart keeps>>) | Different
+| Resend of a temporarily failed message | `sms-resend-freq`, unlimited by default |
+Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>) | Different
+| Queue limits | `sms-*-queue-limit` | No | Not supported
+| Suspend, isolate, graceful drain | Admin commands | No | Not supported
+| Process model | A bearerbox and one or more smsboxes | One process (see
+<<Architecture>>) | Different
+|===
+
+== Operations and security
+
+[cols="3,3,4,2",options="header"]
+|===
+| Feature | Kannel 1.4.5 | {product} | Verdict
+
+| Configuration | `kannel.conf`, with `include` | One TOML file, checked at startup and by
+`--check` (see <<Configuration>>) | Different
+| Status | Admin `status` page (`.txt`, `.html`, `.xml`) | Prometheus `/metrics`, JSON
+`/status`, `/ready` (see <<Monitoring>>) | Different
+| Runtime control (`start-smsc`, `stop-smsc`, `restart`, `reload-lists`, `log-level`) | Yes |
+No | Not supported
+| TLS on listeners and SMSC links | Yes | No (see <<Limitations>>) | Not supported
+| Logging | Log files, syslog, access log | Standard error | Different
+| Outbound HTTP proxy | Yes | No | Not supported
+|===
+
+== Only in porth
+
+[cols="3,5",options="header"]
+|===
+| Feature | Where
+
+| JSON REST API, with status polling | <<HTTP API>>
+| `idempotency_key`: a repeated submit is answered once | <<Send a message>>
+| `callback_url` with the final status as JSON | <<Status callback>>
+| `high` priority on the REST API, ahead of the queue | <<Send a message>>
+| `keep_text: false` blanks the stored text once sent | <<Send a message>>
+| `Message-ID` lines in the `sendsms` answer, matching `%I` in `dlr-url` | <<Responses>>
+| Unreceipted messages expire, and old messages are deleted | <<Lifecycle>>
+| Prometheus metrics and a readiness probe | <<Monitoring>>
+|===
