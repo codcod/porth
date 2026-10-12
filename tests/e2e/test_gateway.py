@@ -1,7 +1,9 @@
 """Unit tests for Gateway listener lifecycle."""
 
 import asyncio
+import os
 import pathlib
+import signal
 import socket
 import subprocess
 import sys
@@ -20,6 +22,7 @@ from porth.config.settings import (
     SMPPClientConfig,
 )
 from porth.domain.model import MessageStatus, SMSMessage
+from porth.entrypoints import app
 from porth.entrypoints.app import Gateway
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -45,6 +48,102 @@ async def test_failed_bind_leaves_runner_for_stop_to_clean_up(uow_factory):
         assert len(gateway.servers) == 1
         await gateway.stop()
     assert all(runner.server is None for runner in gateway.servers)
+
+
+@pytest.mark.asyncio
+async def test_a_lock_check_that_gets_no_answer_shuts_down(uow_factory, monkeypatch):
+    monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.05)
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(app.os, 'kill', lambda pid, sig: kills.append((pid, sig)))
+    monkeypatch.setattr(app.os, '_exit', lambda code: None)
+    released = asyncio.Event()
+
+    class SilentlyDropped:
+        """A connection whose query never answers and whose cancel waits as well."""
+
+        async def execute(self, statement):
+            while not released.is_set():
+                try:
+                    await released.wait()
+                except asyncio.CancelledError:
+                    pass
+
+        async def close(self):
+            pass
+
+    class Engine:
+        """An engine whose graceful close never returns, like its connections'."""
+
+        def __init__(self):
+            self.closes: list[bool] = []
+
+        async def dispose(self, close=True):
+            self.closes.append(close)
+            if close:
+                await asyncio.Event().wait()
+
+    gateway = Gateway(Settings(), uow_factory)
+    gateway._lock = SilentlyDropped()  # type: ignore[assignment]
+    # Released after 1 s, so a check that waits for the answer times out, not hangs
+    asyncio.get_running_loop().call_later(1, released.set)
+    await asyncio.wait_for(gateway._check_lock(), 2)
+    assert kills == [(os.getpid(), signal.SIGTERM)]
+
+    # The shutdown that SIGTERM starts drops the pool without waiting on the server
+    gateway._engine = engine = Engine()  # type: ignore[assignment]
+    await asyncio.wait_for(gateway.stop(), 2)
+    assert engine.closes == [False]
+
+
+@pytest.mark.asyncio
+async def test_a_shutdown_stuck_after_a_lost_lock_is_cut_off(uow_factory, monkeypatch):
+    monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.05)
+    monkeypatch.setattr(app.os, 'kill', lambda pid, sig: None)
+    exits: list[int] = []
+    monkeypatch.setattr(app.os, '_exit', exits.append)
+
+    class Closed:
+        async def execute(self, statement):
+            raise ConnectionError('connection is closed')
+
+        async def close(self):
+            pass
+
+    async def stuck():
+        await asyncio.Event().wait()  # like a stop() awaiting a cancelled query
+
+    gateway = Gateway(Settings(), uow_factory)
+    gateway._lock = Closed()  # type: ignore[assignment]
+    gateway.sweeper.stop = stuck  # type: ignore[method-assign]
+    await gateway._check_lock()
+    stopping = asyncio.create_task(gateway.stop())
+    await asyncio.sleep(0.5)
+    assert exits == [1]
+    assert not stopping.done()
+    stopping.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_lock_lost_while_stopping_sends_no_second_sigterm(
+    uow_factory, monkeypatch
+):
+    monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.05)
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(app.os, 'kill', lambda pid, sig: kills.append((pid, sig)))
+    exits: list[int] = []
+    monkeypatch.setattr(app.os, '_exit', exits.append)
+
+    class Closed:
+        async def execute(self, statement):
+            raise ConnectionError('connection is closed')
+
+    gateway = Gateway(Settings(), uow_factory)
+    gateway._lock = Closed()  # type: ignore[assignment]
+    gateway._stopping = True
+    await gateway._check_lock()
+    await asyncio.sleep(0.3)
+    assert kills == []
+    assert exits == [1]  # still cut off if the stop hangs
 
 
 def test_no_db_and_no_factory_raises():

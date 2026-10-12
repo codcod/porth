@@ -1,12 +1,17 @@
 """The gateway and the app bin/porth runs: build_app(settings)."""
 
+import asyncio
+import contextlib
 import functools
 import logging
+import os
+import signal
 import typing as tp
 
+import sqlalchemy as sa
 from aiohttp import web
 from monobase.db import make_engine
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from porth import metrics
 from porth.adapters.queue import MessageQueue
@@ -22,10 +27,18 @@ from porth.service_layer.routing import Router
 from porth.service_layer.sweep import Sweeper
 from porth.service_layer.unit_of_work import AbstractUnitOfWork, SqlAlchemyUnitOfWork
 
+LOCK_KEY = 0x706F727468  # 'porth' in ASCII
+LOCK_CHECK_SECONDS = 10
+# idle_session_timeout of the lock's session; above LOCK_CHECK_SECONDS
+LOCK_IDLE_SECONDS = 30
+
 
 class Gateway:
     """Everything but the REST listener: recovery, handlers, the Kannel listener,
-    one delivery engine and SMPP client (two with transceiver = false) per SMSC."""
+    one delivery engine and SMPP client (two with transceiver = false) per SMSC.
+
+    One porth per database: start() takes a PostgreSQL advisory lock, so a second
+    gateway on the same database refuses to start instead of sending again."""
 
     def __init__(
         self,
@@ -34,6 +47,10 @@ class Gateway:
     ):
         self.settings = settings
         self._engine: tp.Optional[AsyncEngine] = None
+        self._lock: tp.Optional[AsyncConnection] = None
+        self._lock_check: tp.Optional[asyncio.Task] = None
+        self._lock_lost = False
+        self._stopping = False
         if uow_factory is None:
             if not settings.db:
                 raise ValueError('db is not set: set db in [porth]')
@@ -102,6 +119,29 @@ class Gateway:
 
     async def start(self):
         """Start all gateway components."""
+        # First: a second porth on this database exits before it sends anything.
+        # An injected uow_factory (tests) has no engine and takes no lock.
+        if self._engine is not None:
+            # Session-level and in AUTOCOMMIT, so it never idles in a transaction;
+            # kept before the query, so stop() closes it even if the query fails
+            self._lock = await self._engine.connect()
+            await self._lock.execution_options(isolation_level='AUTOCOMMIT')
+            # A session whose porth vanished unseen (a lost host, a partition) ends
+            # LOCK_IDLE_SECONDS after its last check, and frees the lock, instead of
+            # after TCP keepalive
+            await self._lock.execute(
+                sa.text(f"SET idle_session_timeout = '{LOCK_IDLE_SECONDS}s'")
+            )
+            locked = await self._lock.scalar(
+                sa.text('SELECT pg_try_advisory_lock(:key)'), {'key': LOCK_KEY}
+            )
+            if not locked:
+                raise RuntimeError(
+                    f'Another porth already uses this database (advisory lock '
+                    f'{LOCK_KEY} is held): stop it first'
+                )
+            self._lock_check = asyncio.create_task(self._check_lock())
+
         # Before any worker, listener or bind: what a previous run accepted but did
         # not send goes first. An unreachable database fails the start here.
         await services.recover(
@@ -137,6 +177,34 @@ class Gateway:
 
         logging.info('SMS Gateway started successfully')
 
+    async def _check_lock(self):
+        """Shut down once the lock's session is gone (a database restart, a dropped
+        connection): another porth may hold the lock by now."""
+        # ponytail: polled, so up to LOCK_CHECK_SECONDS of sending after the loss
+        # (twice that on a silent drop); LISTEN on the lock connection if that matters
+        assert self._lock is not None
+        while True:
+            await asyncio.sleep(LOCK_CHECK_SECONDS)
+            # Bounded: a silently dropped connection never answers, and cancelling its
+            # query waits for the server too, so the cancel is not awaited
+            probe = asyncio.ensure_future(self._lock.execute(sa.text('SELECT 1')))
+            done, _ = await asyncio.wait({probe}, timeout=LOCK_CHECK_SECONDS)
+            if not done:
+                probe.cancel()
+                error = f'no answer in {LOCK_CHECK_SECONDS} s'
+            elif probe.exception() is not None:
+                error = str(probe.exception())
+            else:
+                continue
+            logging.error(f'Lost the database advisory lock, shutting down: {error}')
+            self._lock_lost = True
+            if not self._stopping:  # a second SIGTERM would raise inside the cleanup
+                os.kill(os.getpid(), signal.SIGTERM)  # run_app shuts down gracefully
+            # ponytail: a shutdown stuck on the dead server (a stop() awaiting a cancelled
+            # query) is cut off whole; bound each stop step if a clean exit matters there
+            asyncio.get_running_loop().call_later(3 * LOCK_CHECK_SECONDS, os._exit, 1)
+            return
+
     async def _serve(
         self,
         app: web.Application,
@@ -151,6 +219,9 @@ class Gateway:
     async def stop(self):
         """Stop all gateway components."""
         logging.info('Stopping SMS Gateway...')
+        # The lock check runs to the end, so its session never idles out (and frees the
+        # lock) during a slow stop; a loss found now only logs and arms the forced exit
+        self._stopping = True
 
         # Stop delivery engine first, so no worker lazily rebinds a stopped client;
         # disconnect() stops the client's own rebind loop
@@ -189,9 +260,20 @@ class Gateway:
             except Exception as e:
                 logging.error(f'Error stopping HTTP server: {e}')
 
-        # Last: everything above may still write
+        # Last: everything above may still write. Closed explicitly: dispose()
+        # leaves a checked-out connection, and with it the session and the lock.
+        if self._lock_check is not None:
+            self._lock_check.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._lock_check
+        if self._lock is not None:
+            try:
+                await self._lock.close()
+            except Exception as e:
+                logging.error(f'Error releasing the database advisory lock: {e}')
         if self._engine is not None:
-            await self._engine.dispose()
+            # After a lost lock the server may never answer a graceful close
+            await self._engine.dispose(close=not self._lock_lost)
 
         logging.info('SMS Gateway stopped')
 

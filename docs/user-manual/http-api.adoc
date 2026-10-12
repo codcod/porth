@@ -243,3 +243,5 @@ livenessProbe:
 readinessProbe:
   httpGet: {path: /ready, port: 8080}
 ----
+
+For the Deployment's strategy, see <<Running more than one instance>>.
