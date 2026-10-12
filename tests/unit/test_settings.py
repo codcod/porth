@@ -1,5 +1,6 @@
 """Unit tests for load_settings (the [porth] table of a TOML file)."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,36 @@ def test_kannel_user_without_password_raises(tmp_path):
 def test_invalid_allow_ip_raises(tmp_path, entry):
     text = f'[porth.kannel.users.u]\npassword = "p"\nallow_ip = ["{entry}"]\n'
     with pytest.raises(ValueError, match='invalid porth.kannel.users.u.allow_ip'):
+        load(tmp_path, text)
+
+
+def test_http_users_load(tmp_path):
+    text = '[porth.http.users.app]\ntoken = "0123456789abcdef"\nallow_ip = ["::1"]\n'
+    user = load(tmp_path, text).http.users['app']
+    assert (user.token, user.allow_ip) == ('0123456789abcdef', ['::1'])
+
+
+@pytest.mark.parametrize(
+    'text, message',
+    [
+        (
+            '[porth.http.users.a]\ntoken = "short"\n',
+            'invalid porth.http.users.a.token: shorter than 16 characters',
+        ),
+        (
+            '[porth.http.users.a]\ntoken = "0123456789abcdef"\n'
+            '[porth.http.users.b]\ntoken = "0123456789abcdef"\n',
+            'invalid porth.http.users.b.token: the same as porth.http.users.a.token',
+        ),
+        (
+            '[porth.http.users.a]\ntoken = "0123456789abcdef"\nallow_ip = ["nope"]\n',
+            "invalid porth.http.users.a.allow_ip: 'nope'",
+        ),
+    ],
+    ids=['short-token', 'shared-token', 'bad-allow-ip'],
+)
+def test_bad_http_user_raises_naming_the_key(tmp_path, text, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
         load(tmp_path, text)
 
 

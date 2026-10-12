@@ -10,6 +10,12 @@ log_level = "DEBUG"
 host = "0.0.0.0"
 port = 8080
 
+# REST callers, one table each, under any name; without any, /api/v1 is open.
+# A request sends "Authorization: Bearer <token>".
+# [porth.http.users.app]
+# token = "change-me-to-a-long-secret"  # at least 16 characters, unique per user
+# allow_ip = ["127.0.0.1", "10.0.0.0/8"]  # addresses or CIDR networks; unset = any
+
 [porth.kannel]
 host = "0.0.0.0"
 port = 13013

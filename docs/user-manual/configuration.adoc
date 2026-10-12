@@ -12,7 +12,7 @@ bin/porth /etc/porth/config.toml
 top-level tables in the file are ignored.
 
 There are no environment-variable overrides and no `.env` file. Secrets such as the SMSC
-password, the Kannel users' passwords and the database DSN live in the file, so a production
+password, the Kannel users' passwords, the HTTP users' tokens and the database DSN live in the file, so a production
 deployment mounts its own `config.toml`, as a secret, and passes its path.
 
 == Validation
@@ -24,8 +24,11 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
   `reply = "yes"` or an unquoted `default_sender = 12345`;
 * a required key is missing, such as `porth.smsc.op-a.host`;
 * a routing rule is not digits, or names an SMSC that is not configured;
-* a Kannel user's `allow_ip` entry is not an address or CIDR network, or has host bits set
-  (`10.0.0.1/8`), such as `invalid porth.kannel.users.acme.allow_ip: '10.0.0.1/8'`;
+* a Kannel or HTTP user's `allow_ip` entry is not an address or CIDR network, or has host bits
+  set (`10.0.0.1/8`), such as `invalid porth.kannel.users.acme.allow_ip: '10.0.0.1/8'`;
+* an HTTP user's `token` is shorter than 16 characters
+  (`invalid porth.http.users.app.token: shorter than 16 characters`), or is the same as another
+  user's (`invalid porth.http.users.b.token: the same as porth.http.users.a.token`);
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
 * the file has no `[porth]` table.
@@ -43,6 +46,7 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 
 | `http.host` | `0.0.0.0` | Address the HTTP API listens on.
 | `http.port` | `8080` | Port the HTTP API listens on.
+| `http.users.<name>` | none | One `/api/v1` caller per table. See <<HTTP users>>.
 | `kannel.host` | `0.0.0.0` | Address the Kannel-compatible API listens on.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's
@@ -113,6 +117,21 @@ by the table's key. See <<Authentication>>.
 `["127.0.0.1", "10.0.0.0/8"]`. Empty: any address.
 |===
 
+== HTTP users
+
+Each `[porth.http.users.<name>]` table is one caller of the REST API. The name only tells the
+tables apart: it is never sent or checked. See <<http-authentication>>.
+
+[cols="2,1,4",options="header"]
+|===
+| Key | Default | Meaning
+
+| `token` | none | **Required.** The caller's Bearer token: at least 16 characters, and
+different from every other user's. Generate it, for example with `openssl rand -hex 32`.
+| `allow_ip` | empty | The addresses and CIDR networks the user may call from, such as
+`["127.0.0.1", "10.0.0.0/8"]`. Empty: any address.
+|===
+
 == Routing rules
 
 Each message goes out through one SMSC, chosen once when it is submitted:
@@ -141,6 +160,10 @@ log_level = "INFO"
 [porth.http]
 host = "0.0.0.0"
 port = 8080
+
+[porth.http.users.app]
+token = "3b1f0c9e5d7a4e2b8c6f1a0d9e7b5c3a"
+allow_ip = ["10.0.0.0/8"]
 
 [porth.kannel]
 default_sender = "12345"

@@ -11,10 +11,10 @@ The Planned column names the ticket for a planned change, or `—` where none is
 `400` `… field misformed, rejected`, not honoured. A `udh` with GSM coding is measured against
 160 characters, not the 140 octets less the UDH that one SMS holds, so a slightly long one may be
 refused by the SMSC rather than by {product}. | —
-| Security | No TLS: the Kannel API's credentials travel in clear over HTTP, and an
-`allow_ip` list is no substitute for a trusted network. The REST API has no authentication,
-nor do its `/metrics`, `/status` and `/ready` endpoints: keep the HTTP listener on a trusted
-network. | —
+| Security | No TLS: the Kannel API's credentials travel in clear over HTTP, the
+REST API's Bearer tokens travel in clear too, and an `allow_ip` list is no substitute for a
+trusted network. The HTTP listener's `/health`, `/metrics`, `/status` and `/ready` endpoints
+need no token: keep the HTTP listener on a trusted network. | —
 | Metrics | Counters start from zero at every restart. A final status whose database
 write rolls back is still counted. | —
 | SMSC routing | Kannel's `unified-prefix` and per-SMSC `allowed-prefix`, `denied-prefix`

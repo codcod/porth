@@ -1,5 +1,6 @@
 """HTTP/REST API implementation using aiohttp."""
 
+import hmac
 import importlib.metadata
 import logging
 import time
@@ -13,9 +14,10 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from porth import metrics
-from porth.config.settings import Settings
+from porth.config.settings import HTTPUser, Settings
 from porth.domain.exceptions import NoRoute
 from porth.domain.model import MessageStatus, SMSMessage
+from porth.entrypoints import ip_allowed
 from porth.adapters.queue import MessageQueue
 from porth.service_layer.routing import Router
 from porth.service_layer import services
@@ -46,7 +48,11 @@ def create_http_app(
     app['started'] = time.monotonic()
 
     # Add routes
-    api_v1 = web.Application()
+    if not settings.http.users:
+        logger.warning(
+            'HTTP API: no porth.http.users configured; /api/v1 accepts any caller'
+        )
+    api_v1 = web.Application(middlewares=[_bearer_auth(settings.http.users)])
     api_v1['main_app'] = app  # Reference to main app for message queue access
 
     api_v1.router.add_post('/sms/send', send_sms)
@@ -59,6 +65,40 @@ def create_http_app(
     app.router.add_get('/ready', ready)
 
     return app
+
+
+def _authorised(request: web.Request, users: tp.Mapping[str, HTTPUser]) -> bool:
+    """A Bearer token matching a user's, from an address that user allows."""
+    scheme, _, token = request.headers.get('Authorization', '').partition(' ')
+    if scheme.lower() != 'bearer' or not token:
+        return False
+    # aiohttp decodes header bytes with surrogateescape: this gives back the raw bytes, so a
+    # non-UTF-8 token is a mismatch, not a UnicodeEncodeError
+    raw = token.encode(errors='surrogateescape')
+    # Every token is compared, so the time taken does not tell which one matched
+    matched = [u for u in users.values() if hmac.compare_digest(raw, u.token.encode())]
+    return any(ip_allowed(request.remote, u.allow_ip) for u in matched)
+
+
+def _bearer_auth(users: tp.Mapping[str, HTTPUser]) -> tp.Any:
+    """The /api/v1 middleware: a 401 for any caller _authorised refuses; open with no users."""
+
+    @web.middleware
+    async def middleware(
+        request: web.Request,
+        handler: tp.Callable[[web.Request], tp.Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        if users and not _authorised(request, users):
+            # Never the token: the address is enough to find the caller
+            logger.warning(f'HTTP API: authorization failed from {request.remote}')
+            return web.json_response(
+                {'error': 'Unauthorized'},
+                status=401,
+                headers={'WWW-Authenticate': 'Bearer realm="porth"'},
+            )
+        return await handler(request)
+
+    return middleware
 
 
 # Every submit field porth knows; any other is refused (design.md §4.1)

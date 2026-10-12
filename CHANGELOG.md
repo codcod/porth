@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+**Added**
+
+- Bearer tokens on the REST API: each `[porth.http.users.<name>]` table is one caller of
+  `/api/v1`, with a `token` (at least 16 characters, unique) and an optional `allow_ip`. A
+  request without a valid `Authorization: Bearer <token>` gets `401`. With no users the API
+  stays open, as before, and porth warns at startup; `/health`, `/ready`, `/status` and
+  `/metrics` never need a token. The user manual's *HTTP API* and *Configuration* cover it
+  (POR-035).
+
 ## [0.3.0] - 2026-10-12
 
 **Added**
