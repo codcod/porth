@@ -2,6 +2,8 @@
 
 import asyncio
 import inspect
+import os
+import signal
 import uuid
 
 import aiohttp
@@ -22,6 +24,7 @@ from porth.config.settings import (
     Settings,
     SMPPClientConfig,
 )
+from porth.entrypoints import app
 from porth.entrypoints.app import Gateway
 from tests.integration.conftest import DSN
 from tests.integration.test_repository import pytestmark  # noqa: F401
@@ -280,3 +283,89 @@ async def test_message_whose_smsc_was_removed_is_rerouted_on_restart(env):
             sa.select(messages.c.smsc).where(messages.c.message_id == message_id)
         )
     assert stored == 'new'
+
+
+@pytest.mark.asyncio
+async def test_a_second_gateway_on_the_same_database_refuses_to_start(database):
+    smsc = SMSC(
+        'unused'
+    )  # never started: its client retries the bind in the background
+    first = gateway(smsc, free_port())
+    await first.start()
+    try:
+        # A session whose porth vanished unseen ends, and frees the lock
+        assert first._lock is not None
+        assert await first._lock.scalar(sa.text('SHOW idle_session_timeout')) == '30s'
+        second = gateway(smsc, free_port())
+        with pytest.raises(RuntimeError, match='Another porth'):
+            await second.start()
+        await second.stop()
+    finally:
+        await first.stop()
+
+    third = gateway(smsc, free_port())  # the lock was released
+    await third.start()
+    await third.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_that_loses_its_lock_shuts_down(database, monkeypatch):
+    monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.05)
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(app.os, 'kill', lambda pid, sig: kills.append((pid, sig)))
+    monkeypatch.setattr(app.os, '_exit', lambda code: None)
+    gw = gateway(SMSC('unused'), free_port())
+    await gw.start()
+    try:
+        engine = make_engine(DSN)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    sa.text(
+                        'SELECT pg_terminate_backend(pid) FROM pg_locks '
+                        "WHERE locktype = 'advisory' AND database = "
+                        '(SELECT oid FROM pg_database WHERE datname = current_database())'
+                    )
+                )
+        finally:
+            await engine.dispose()
+        await until(lambda: kills, timeout=5)
+    finally:
+        await gw.stop()
+    assert kills == [(os.getpid(), signal.SIGTERM)]
+
+
+@pytest.mark.asyncio
+async def test_a_slow_stop_keeps_the_lock_past_the_idle_timeout(database, monkeypatch):
+    monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.2)
+    monkeypatch.setattr(app, 'LOCK_IDLE_SECONDS', 1)
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(app.os, 'kill', lambda pid, sig: kills.append((pid, sig)))
+    exits: list[int] = []
+    monkeypatch.setattr(app.os, '_exit', exits.append)
+    gw = gateway(SMSC('unused'), free_port())
+    await gw.start()
+    sweeper_stop = gw.sweeper.stop
+
+    async def slow_stop():
+        await asyncio.sleep(2.5)  # like SMPP unbinds waiting out their timeout
+        await sweeper_stop()
+
+    gw.sweeper.stop = slow_stop  # type: ignore[method-assign]
+    stopping = asyncio.create_task(gw.stop())
+    await asyncio.sleep(2)  # past the idle timeout
+    engine = make_engine(DSN)
+    try:
+        async with engine.connect() as conn:
+            held = await conn.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                    'AND classid = 112 AND objid = 1869771880 AND database = '
+                    '(SELECT oid FROM pg_database WHERE datname = current_database())'
+                )
+            )
+    finally:
+        await engine.dispose()
+    await stopping
+    assert held == 1
+    assert kills == exits == []  # no check failed

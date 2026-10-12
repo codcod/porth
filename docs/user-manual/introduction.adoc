@@ -34,7 +34,9 @@ Run {product} only on a trusted network.
 == Architecture
 
 {product} is a single process with one external service, PostgreSQL, which holds every
-message and its status. There is no broker or cache.
+message and its status. There is no broker or cache. One {product} runs per database: a
+second one exits at start, and one that loses its database session stops (see
+<<Running more than one instance>>).
 
 [mermaid]
 ....

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+**Added**
+
+- One porth per database: a second porth on the same database exits at start instead of
+  sending the unsent messages again, and a porth that loses its database session stops
+  itself (exit code 0, or 1 when its shutdown is still running 30 s later). The user
+  manual's *Running more than one instance* covers restart policies, Kubernetes
+  (`strategy: Recreate`) and connection poolers (POR-032).
+
+**Changed**
+
+- porth now needs PostgreSQL 14 or later: its lock session sets `idle_session_timeout`, so a
+  porth that vanished without closing its connection frees the lock within 30 s (POR-032).
+
 ## [0.2.1] - 2026-10-11
 
 **Added**
