@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   itself (exit code 0, or 1 when its shutdown is still running 30 s later). The user
   manual's *Running more than one instance* covers restart policies, Kubernetes
   (`strategy: Recreate`) and connection poolers (POR-032).
+- A published container image: every release tag pushes `ghcr.io/codcod/porth:<version>`
+  and `:latest` for `linux/amd64` and `linux/arm64`, so porth runs without Python or uv.
+  See the user manual's *Container image* (POR-034).
 
 **Changed**
 
