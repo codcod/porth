@@ -1,5 +1,6 @@
 """Unit tests for the HTTP API send and status endpoints."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,7 +8,7 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy.exc import SQLAlchemyError
 
-from porth.config.settings import RoutingConfig, Settings
+from porth.config.settings import HTTPConfig, HTTPUser, RoutingConfig, Settings
 from porth.domain.model import MessageStatus
 from porth.adapters.queue import MessageQueue
 from porth.service_layer.routing import Router
@@ -426,3 +427,87 @@ async def test_health_carries_the_real_time(http):
     at = datetime.strptime(body['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
     at = at.replace(tzinfo=timezone.utc)
     assert abs(datetime.now(timezone.utc) - at) < timedelta(seconds=5)
+
+
+TOKEN = 'a-token-of-16-chars'
+BEARER = {'Authorization': f'Bearer {TOKEN}'}
+
+
+@pytest_asyncio.fixture
+async def authed(uow_factory, queues, request):
+    allow_ip = getattr(request, 'param', [])
+    users = {'app': HTTPUser(token=TOKEN, allow_ip=allow_ip)}
+    settings = Settings(http=HTTPConfig(users=users))
+    app = create_http_app(queues, ROUTER, uow_factory, settings, smsc_state)
+    async with TestClient(TestServer(app)) as client:
+        yield client
+
+
+@pytest.mark.asyncio
+async def test_right_token_sends_and_polls(authed):
+    resp = await authed.post('/api/v1/sms/send', json=BODY, headers=BEARER)
+    assert resp.status == 200
+    message_id = (await resp.json())['message_id']
+    resp = await authed.get(f'/api/v1/sms/status/{message_id}', headers=BEARER)
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'headers',
+    [
+        {},
+        {'Authorization': 'Bearer wrong-token-of-16-chars'},
+        {'Authorization': f'Basic {TOKEN}'},
+        {'Authorization': 'Bearer'},
+    ],
+    ids=['no-header', 'wrong-token', 'wrong-scheme', 'no-token'],
+)
+async def test_bad_credentials_are_401(authed, uow_factory, caplog, headers):
+    resp = await authed.post('/api/v1/sms/send', json=BODY, headers=headers)
+    assert resp.status == 401
+    assert resp.headers['WWW-Authenticate'] == 'Bearer realm="porth"'
+    assert await resp.json() == {'error': 'Unauthorized'}
+    assert uow_factory.repo.messages == {}
+    assert TOKEN not in caplog.text and 'wrong-token' not in caplog.text
+    resp = await authed.get('/api/v1/sms/status/x', headers=headers)
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_non_utf8_token_is_401(authed):
+    # Raw bytes on the wire: the test client takes header values as str
+    reader, writer = await asyncio.open_connection(authed.host, authed.port)
+    writer.write(
+        b'GET /api/v1/sms/status/x HTTP/1.1\r\nHost: x\r\n'
+        b'Authorization: Bearer \xff\xfe\r\nConnection: close\r\n\r\n'
+    )
+    status_line = await reader.readline()
+    writer.close()
+    assert status_line.split()[1] == b'401'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('authed', [['127.0.0.0/8']], indirect=True)
+async def test_token_from_inside_allow_ip_is_accepted(authed):
+    resp = await authed.post('/api/v1/sms/send', json=BODY, headers=BEARER)
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('authed', [['10.0.0.0/8']], indirect=True)
+async def test_token_from_outside_allow_ip_is_401(authed, caplog):
+    resp = await authed.post('/api/v1/sms/send', json=BODY, headers=BEARER)
+    assert resp.status == 401
+    assert TOKEN not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path', ['/health', '/ready', '/status', '/metrics'])
+async def test_probes_need_no_token(authed, path):
+    assert (await authed.get(path)).status == 200
+
+
+def test_no_users_warns_that_the_api_is_open(uow_factory, queues, caplog):
+    create_http_app(queues, ROUTER, uow_factory, Settings(), smsc_state)
+    assert '/api/v1 accepts any caller' in caplog.text

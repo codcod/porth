@@ -2,7 +2,6 @@
 
 import codecs
 import hmac
-import ipaddress
 import logging
 import typing as tp
 import urllib.parse
@@ -17,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from porth import metrics
 from porth.config.settings import KannelUser
+from porth.entrypoints import ip_allowed
 from porth.adapters.smpp import choose_data_coding, sms_payload
 from porth.domain.exceptions import MessageError, NoRoute
 from porth.domain.model import MessageStatus, SMSMessage
@@ -156,16 +156,7 @@ def _authorised(request: web.Request, params: tp.Mapping[str, str]) -> bool:
         return False
     if not hmac.compare_digest(password.encode(), user.password.encode()):
         return False
-    if not user.allow_ip:
-        return True
-    if request.remote is None:  # not a TCP peer: no address to allow
-        return False
-    try:
-        addr = ipaddress.ip_address(request.remote)
-    except ValueError:
-        return False
-    # ponytail: the networks are parsed per request; pre-parse them if users grow long lists
-    return any(addr in ipaddress.ip_network(n) for n in user.allow_ip)
+    return ip_allowed(request.remote, user.allow_ip)
 
 
 def _encoding(

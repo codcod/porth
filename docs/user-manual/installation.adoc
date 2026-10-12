@@ -68,7 +68,8 @@ docker compose -f compose.demo.yaml up -d
   add `--build`; after a new release, run `docker compose -f compose.demo.yaml pull` first.
   If `smsc` exits with `No module named smpp.sim`, the image predates the simulator: do the
   same.
-* The demo publishes 8080 and 2776 on `127.0.0.1` only, since neither is authenticated, and
+* The demo publishes 8080 and 2776 on `127.0.0.1` only, since neither is authenticated (its
+  config sets no `http.users`), and
   no database port. It shares nothing with `compose.yaml`, and `down -v` removes its database.
 
 == Container image

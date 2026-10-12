@@ -13,9 +13,18 @@ if tp.TYPE_CHECKING:
 
 
 @dataclasses.dataclass(kw_only=True)
+class HTTPUser:
+    token: str  # the Bearer token, at least 16 characters
+    # addresses or CIDR networks; empty: any address
+    allow_ip: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(kw_only=True)
 class HTTPConfig:
     host: str = '0.0.0.0'
     port: int = 8080
+    # name (a label for logs) -> its REST caller; none: /api/v1 is open
+    users: dict[str, HTTPUser] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -111,14 +120,24 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     for f in dataclasses.fields(StoreConfig):
         if getattr(settings.store, f.name) < 1:
             raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')
-    for name, user in settings.kannel.users.items():
+    tokens: dict[str, str] = {}
+    for name, http_user in settings.http.users.items():
+        key = f'porth.http.users.{name}.token'
+        if len(http_user.token) < 16:
+            raise ValueError(f'invalid {key}: shorter than 16 characters')
+        if http_user.token in tokens:
+            raise ValueError(f'invalid {key}: the same as {tokens[http_user.token]}')
+        tokens[http_user.token] = key
+    users: list[tuple[str, HTTPUser | KannelUser]] = [
+        *((f'porth.http.users.{n}', u) for n, u in settings.http.users.items()),
+        *((f'porth.kannel.users.{n}', u) for n, u in settings.kannel.users.items()),
+    ]
+    for key, user in users:
         for entry in user.allow_ip:
             try:
                 ipaddress.ip_network(entry)
             except ValueError:
-                raise ValueError(
-                    f'invalid porth.kannel.users.{name}.allow_ip: {entry!r}'
-                ) from None
+                raise ValueError(f'invalid {key}.allow_ip: {entry!r}') from None
     return settings
 
 

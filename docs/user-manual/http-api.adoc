@@ -1,6 +1,26 @@
 = HTTP API
 
-The API has no authentication. See <<Introduction>>.
+[[http-authentication]]
+== Bearer tokens
+
+Each `[porth.http.users.<name>]` table is one caller of `/api/v1`, with its own token. See
+<<HTTP users>>. A request to `/api/v1` must carry one of the tokens:
+
+----
+Authorization: Bearer <token>
+----
+
+and come from an address in that user's `allow_ip`, if it has one. Otherwise {product} answers
+`401` with the header `WWW-Authenticate: Bearer realm="porth"` and the body
+`{"error": "Unauthorized"}`, whichever check failed, and nothing is stored. The warning it logs
+names the caller's address, never the token.
+
+* With no users configured, `/api/v1` accepts any caller and {product} logs a warning at
+  startup, as the Kannel API does.
+* `/health`, `/ready`, `/status` and `/metrics` need no token, so probes and Prometheus can
+  reach them. Keep them off the public network.
+* The caller's address is the TCP peer. `X-Forwarded-For` is never read, so behind a proxy
+  `allow_ip` sees the proxy's address.
 
 == Send a message
 
@@ -74,6 +94,7 @@ message is deleted, a submit with its key is a new message.
 [source,bash]
 ----
 curl -X POST http://localhost:8080/api/v1/sms/send \
+  -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"source_addr": "+1234567890", "destination_addr": "+0987654321",
        "message_text": "Hello from porth!"}'
@@ -158,8 +179,8 @@ retention window deletes the record (see <<Lifecycle>>).
 
 == Monitoring
 
-Four endpoints on the HTTP API listener report on {product}. Like the rest of the HTTP API,
-they need no authentication.
+Four endpoints on the HTTP API listener report on {product}. Unlike `/api/v1`, they need no
+token (see <<http-authentication>>).
 
 === Health
 

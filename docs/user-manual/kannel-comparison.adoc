@@ -221,6 +221,7 @@ No | Not supported
 | Feature | Where
 
 | JSON REST API, with status polling | <<HTTP API>>
+| Bearer tokens on the REST API, per caller with `allow_ip` | <<http-authentication>>
 | `idempotency_key`: a repeated submit is answered once | <<Send a message>>
 | `callback_url` with the final status as JSON | <<Status callback>>
 | `high` priority on the REST API, ahead of the queue | <<Send a message>>
