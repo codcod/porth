@@ -26,7 +26,7 @@ make migrate
 make run
 ```
 
-A container image: `make docker-build` (see the user manual's *Container image*).
+A container image: `ghcr.io/codcod/porth:<version>`, or `make docker-build` from a clone. The user manual's *Container image* has the migrate and run commands.
 
 ### Basic Usage
 

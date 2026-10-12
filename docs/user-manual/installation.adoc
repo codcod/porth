@@ -45,7 +45,10 @@ then stops the delivery workers, unbinds from the SMSC, and closes the Kannel li
 
 == Container image
 
-`make docker-build` builds the image `porth` from the repository's `Dockerfile`: a
+Every release publishes the image `ghcr.io/codcod/porth:<version>` (for example
+`ghcr.io/codcod/porth:0.3.0`), and `ghcr.io/codcod/porth:latest` names the most recently
+tagged release.
+It runs on `linux/amd64` and `linux/arm64`, and needs no Python or uv on the host. It is a
 distroless Python 3.13 runtime holding `bin/porth`, the default `config/`, the migrations and
 `alembic.ini`. It exposes 8080 (HTTP API) and 13013 (Kannel), and runs as a non-root user.
 
@@ -55,13 +58,17 @@ migrate step. Mount the deployment's configuration over the default:
 [source,bash]
 ----
 docker run --rm -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro \
-  porth -m alembic upgrade head
+  ghcr.io/codcod/porth:<version> -m alembic upgrade head
 docker run -d --restart unless-stopped -p 8080:8080 -p 13013:13013 \
-  -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro porth
+  -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro ghcr.io/codcod/porth:<version>
 ----
 
 The migrate step reads `db` from the mounted file, as `make migrate` does. Run it before
 every start after an upgrade.
+
+To build the image from a clone instead, run `make docker-build`. It builds the same
+`Dockerfile` into the local image `porth`, which takes the place of
+`ghcr.io/codcod/porth:<version>` in the commands above.
 
 == What a restart keeps
 
