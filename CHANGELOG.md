@@ -16,11 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A published container image: every release tag pushes `ghcr.io/codcod/porth:<version>`
   and `:latest` for `linux/amd64` and `linux/arm64`, so porth runs without Python or uv.
   See the user manual's *Container image* (POR-034).
+- A demo without a carrier: `docker compose -f compose.demo.yaml up -d` runs porth, its
+  PostgreSQL and smppai's simulator SMSC, which answers every message with a delivery
+  receipt and can send an MO. See the README's *Try it* (POR-036).
 
 **Changed**
 
 - porth now needs PostgreSQL 14 or later: its lock session sets `idle_session_timeout`, so a
   porth that vanished without closing its connection frees the lock within 30 s (POR-032).
+- smppai 0.12.0 (was 0.10.0), which ships the simulator SMSC `smpp.sim` (POR-036).
 
 ## [0.2.1] - 2026-10-11
 

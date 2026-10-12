@@ -8,6 +8,30 @@ from the differences the user manual's *porth and Kannel* chapter lists.
 The user manual (`docs/`, built with `make docs-build`) is attached as PDF and EPUB to every
 GitHub release.
 
+### Try it
+
+No carrier needed: `compose.demo.yaml` runs porth against smppai's simulator SMSC, which
+answers every message with a delivery receipt.
+
+```bash
+git clone https://github.com/codcod/porth.git && cd porth
+docker compose -f compose.demo.yaml up -d
+until curl -sf localhost:8080/ready; do sleep 1; done
+
+# Send, then poll: "status": "delivered" a second later
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+curl -s localhost:8080/api/v1/sms/status/<message_id>
+
+# An MO from the simulator: porth logs "MO from 306900000000 dropped: mo.url is not set"
+curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
+docker compose -f compose.demo.yaml logs porth | grep 'MO from'
+
+docker compose -f compose.demo.yaml down -v
+```
+
+The user manual's *Try it without a carrier* covers failed receipts and forwarding MOs.
+
 ### Installation
 
 ```bash
