@@ -43,6 +43,34 @@ error.
 Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown first closes the HTTP API listener,
 then stops the delivery workers, unbinds from the SMSC, and closes the Kannel listener.
 
+== Try it without a carrier
+
+`compose.demo.yaml`, in the repository root, runs {product} with its own PostgreSQL and
+smppai's simulator SMSC (`python -m smpp.sim`). The simulator answers every message with a
+delivery receipt and can send {product} an MO. It accepts any bind and has no
+authentication, so use it only as a test tool. The file's header comment and the README's
+*Try it* walk through a send, its status, and an MO:
+
+[source,bash]
+----
+docker compose -f compose.demo.yaml up -d
+----
+
+* By default every receipt says `DELIVRD`, one second after the submit. To see failures too,
+  change the `smsc` service's command to add `--stat DELIVRD:9 --stat UNDELIV:1` (about one
+  message in ten, at random, comes back `failed`).
+* The demo configuration sets no `mo.url`, so {product} logs each MO (`MO from <number>
+  dropped: mo.url is not set`) instead of forwarding it. To forward MOs to an application,
+  set `[porth.mo] url` in the `config.toml` entry at the end of the file.
+* The demo uses `ghcr.io/codcod/porth:latest`, or builds it from the clone when it cannot be
+  pulled. Until a release publishes that image, `up` prints a pull error (`denied`) and then
+  builds: that is expected. Once an image is local, `up` keeps using it: after a `git pull`,
+  add `--build`; after a new release, run `docker compose -f compose.demo.yaml pull` first.
+  If `smsc` exits with `No module named smpp.sim`, the image predates the simulator: do the
+  same.
+* The demo publishes 8080 and 2776 on `127.0.0.1` only, since neither is authenticated, and
+  no database port. It shares nothing with `compose.yaml`, and `down -v` removes its database.
+
 == Container image
 
 Every release publishes the image `ghcr.io/codcod/porth:<version>` (for example

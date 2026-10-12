@@ -1,0 +1,85 @@
+# Try porth without a carrier: PostgreSQL, porth, and smppai's simulator SMSC, which
+# answers every message with a delivery receipt and can send porth an MO. Separate from
+# compose.yaml, so the demo never touches the dev database.
+#
+#   docker compose -f compose.demo.yaml up -d
+#   until curl -sf localhost:8080/ready; do sleep 1; done
+#   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+#     -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+#   curl -s localhost:8080/api/v1/sms/status/<message_id>       # "delivered"
+#   curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
+#   docker compose -f compose.demo.yaml logs porth | grep 'MO from'
+#   docker compose -f compose.demo.yaml down -v
+#
+# The image is ghcr.io/codcod/porth:latest, built from this clone when it can't be
+# pulled (a "denied" pull error before the build is expected until a release publishes
+# it). Once local, up keeps using it: add --build after a git pull, or run pull after a
+# release. If smsc exits with "No module named smpp.sim", the image predates the
+# simulator: do the same.
+
+name: porth-demo
+
+x-porth: &porth
+  image: ghcr.io/codcod/porth:latest
+  configs:
+    - source: config.toml
+      target: /opt/porth/config/config.toml
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: porth
+      POSTGRES_PASSWORD: porth
+      POSTGRES_DB: porth
+    volumes: [postgres-data:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porth -d porth"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  migrate:
+    <<: *porth
+    command: ["-m", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # Accepts any system_id/password. --stat DELIVRD:9 --stat UNDELIV:1 fails about one in ten.
+  smsc:
+    <<: *porth
+    command: ["-m", "smpp.sim", "--host", "0.0.0.0"]
+    ports: ["127.0.0.1:2776:2776"]
+
+  porth:
+    <<: *porth
+    # build: here alone, so up builds the image once; migrate and smsc reuse the tag
+    build: .
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      smsc: {condition: service_started}
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:8080"]
+
+volumes:
+  postgres-data:
+
+configs:
+  config.toml:
+    content: |
+      [porth]
+      db = "postgresql+asyncpg://porth:porth@postgres:5432/porth"
+      log_level = "INFO"
+
+      # No url: an MO is logged ("MO from ... dropped") instead of forwarded.
+      # [porth.mo]
+      # url = "http://app:8000/mo?from=%p&to=%P&text=%a"
+
+      [porth.smsc.sim]
+      host = "smsc"
+      port = 2775
+      system_id = "porth"
+      password = "demo"
+
+      [porth.routing]
+      default = "sim"
