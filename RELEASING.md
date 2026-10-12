@@ -5,9 +5,13 @@ Releases are cut by hand. There is no release CI and no semantic-release. To cut
 1. Bump `version` in `pyproject.toml` (currently `0.2.1`).
 2. Add a dated entry to `CHANGELOG.md`.
 3. Update the user manual (`docs/user-manual/`) for whatever changed. Run `make docs-check`.
-4. Commit the changes.
+4. Commit the changes, push them to `main` (or merge their pull request) and wait for CI to
+   go green.
 5. Tag the commit `vX.Y.Z`.
 6. Push the tag.
+
+CI is `.github/workflows/ci.yml`. It runs lint, the tests and `make docs-check` on every pull
+request and push to `main`, but not on tags, so step 4 is what shows the tagged commit is green.
 
 Pushing the tag starts `.github/workflows/docs-release.yml`. It creates the GitHub release for
 the tag if none exists, builds the user manual with snowball (`snowball.yaml`), and attaches
