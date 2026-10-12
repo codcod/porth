@@ -1,0 +1,71 @@
+# Run lint, the unit/e2e and PostgreSQL integration tests, and the user manual check on every
+# pull request and push to main.
+#
+# The jobs call the Makefile targets, so CI runs what a contributor runs locally. `docs` only
+# validates the manual (`make docs-check`); docs-release.yml builds it for release.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    # The integration conftest's default TEST_PORTH_DB points here and creates porth_test itself.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: porth
+          POSTGRES_PASSWORD: porth
+          POSTGRES_DB: porth
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U porth -d porth"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - run: make test-unit
+      - run: make test-integration
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Ubuntu runners keep Homebrew off PATH; see docs-release.yml.
+      - name: Install snowball
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          brew update --quiet
+          brew install codcod/tap/snowball
+          snowball setup
+      - run: make docs-check
