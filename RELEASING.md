@@ -3,7 +3,7 @@
 Releases are cut by hand: there is no semantic-release. The tag push then publishes the manual
 and the container image (below). To cut one:
 
-1. Bump `version` in `pyproject.toml` (currently `0.2.1`).
+1. Bump `version` in `pyproject.toml` (currently `0.3.0`).
 2. Add a dated entry to `CHANGELOG.md`.
 3. Update the user manual (`docs/user-manual/`) for whatever changed. Run `make docs-check`.
 4. Commit the changes, push them to `main` (or merge their pull request) and wait for CI to
