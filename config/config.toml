@@ -5,6 +5,7 @@
 [porth]
 db = "postgresql+asyncpg://porth:porth@localhost:5432/porth"  # compose's postgres
 log_level = "DEBUG"
+# log_format = "json"   # one JSON object per line
 
 [porth.http]
 host = "0.0.0.0"

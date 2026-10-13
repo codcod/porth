@@ -99,6 +99,15 @@ class FlakyUowFactory(FakeUowFactory):
 
 
 @pytest.mark.asyncio
+async def test_sent_line_carries_smsc_and_message_id(caplog):
+    caplog.set_level('INFO')
+    engine, message = make(FakeHandler())
+    await engine._process_message(message)
+    (record,) = [r for r in caplog.records if 'sent through SMSC a' in r.message]
+    assert (record.smsc, record.message_id) == ('a', message.message_id)
+
+
+@pytest.mark.asyncio
 async def test_failing_sent_write_is_retried_not_resent(monkeypatch):
     monkeypatch.setattr(delivery_module, '_SENT_WRITE_WAITS', (0, 0, 0))
     handler = CountingHandler()

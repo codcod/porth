@@ -89,10 +89,16 @@ class MOHandler:
         """Forward one MO (smppai's, reassembled), from the SMSC named smsc, in its
         own task."""
         if not self.config.url:
-            logger.info(f'MO from {msg.sender.addr} dropped: mo.url is not set')
+            logger.info(
+                f'MO from {msg.sender.addr} dropped: mo.url is not set',
+                extra={'smsc': smsc},
+            )
             return
         if msg.text is None:
-            logger.info(f'MO from {msg.sender.addr} dropped: text not decodable')
+            logger.info(
+                f'MO from {msg.sender.addr} dropped: text not decodable',
+                extra={'smsc': smsc},
+            )
             return
         values = mo_values(msg, datetime.now(timezone.utc))
         values['i'] = smsc
@@ -113,7 +119,10 @@ class MOHandler:
         try:
             status, content_type, text = await self.client.get(url, self._wants_reply)
         except Exception as e:  # operator-supplied URL: anything can go wrong
-            logger.warning(f'MO from {sender}: application request failed: {e!r}')
+            logger.warning(
+                f'MO from {sender}: application request failed: {e!r}',
+                extra={'smsc': smsc},
+            )
             metrics.mo.labels(smsc, 'failed').inc()
             return
         metrics.mo.labels(smsc, 'forwarded').inc()
@@ -129,7 +138,9 @@ class MOHandler:
             body = text.strip()
             why = '' if body else 'empty body'
         if why:
-            logger.info(f'MO from {sender}: no reply sent ({why})')
+            logger.info(
+                f'MO from {sender}: no reply sent ({why})', extra={'smsc': smsc}
+            )
             return
         reply = SMSMessage(
             source_addr=number(msg.to),
@@ -146,6 +157,12 @@ class MOHandler:
         try:
             await services.submit(self.uow_factory, self.queues, [reply])
         except Exception as e:
-            logger.warning(f'MO from {sender}: reply not stored, not sent: {e!r}')
+            logger.warning(
+                f'MO from {sender}: reply not stored, not sent: {e!r}',
+                extra={'smsc': smsc},
+            )
             return
-        logger.info(f'MO from {sender}: reply {reply.message_id} queued')
+        logger.info(
+            f'MO from {sender}: reply {reply.message_id} queued',
+            extra={'message_id': reply.message_id, 'smsc': smsc},
+        )

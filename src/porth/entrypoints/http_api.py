@@ -233,7 +233,10 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
         )
     metrics.submitted.labels('http').inc()
 
-    logger.info(f'HTTP API: Queued message {message.message_id}')
+    logger.info(
+        f'HTTP API: Queued message {message.message_id}',
+        extra={'message_id': message.message_id, 'smsc': message.smsc},
+    )
     return web.json_response(
         {
             'message_id': message.message_id,

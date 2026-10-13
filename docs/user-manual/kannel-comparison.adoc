@@ -211,7 +211,7 @@ Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>)
 | Runtime control (`start-smsc`, `stop-smsc`, `restart`, `reload-lists`, `log-level`) | Yes |
 No | Not supported
 | TLS on listeners and SMSC links | Yes | No (see <<Limitations>>) | Not supported
-| Logging | Log files, syslog, access log | Standard error | Different
+| Logging | Log files, syslog, access log | Standard error; JSON lines with `log_format = "json"` | Different
 | Outbound HTTP proxy | Yes | No | Not supported
 |===
 

@@ -117,7 +117,8 @@ class DLRHandler:
         metrics.receipts.labels(smsc, 'false').inc()
         # info, not debug: a systematic SMSC id-format mismatch must show up
         logger.info(
-            f'Receipt for unknown SMSC id {msg.receipt.id!r} from {smsc} ignored'
+            f'Receipt for unknown SMSC id {msg.receipt.id!r} from {smsc} ignored',
+            extra={'smsc': smsc},
         )
 
     async def _apply(self, msg: Message, smsc: str, now: datetime) -> bool:
@@ -139,7 +140,8 @@ class DLRHandler:
                 if message.status in _TERMINAL:
                     logger.debug(
                         f'Receipt {smsc_id} for {message.status.value} message '
-                        f'{message.message_id} ignored'
+                        f'{message.message_id} ignored',
+                        extra={'smsc': smsc, 'message_id': message.message_id},
                     )
                     return True
                 self._advance(message, receipt.state, smsc_id, now)
@@ -153,13 +155,15 @@ class DLRHandler:
                 await uow.commit()
         except Exception:
             logger.exception(
-                f'Receipt {smsc_id!r} ({receipt.state!r}) not saved, so lost'
+                f'Receipt {smsc_id!r} ({receipt.state!r}) not saved, so lost',
+                extra={'smsc': smsc},
             )
             return True
 
         if message.status in _TERMINAL:
             logger.info(
-                f'Message {message.message_id} {message.status.value} (receipt)'
+                f'Message {message.message_id} {message.status.value} (receipt)',
+                extra={'smsc': smsc, 'message_id': message.message_id},
             )
         # Own task, so smppai's receive loop never waits on the client's server
         self.dispatch(call)
@@ -227,7 +231,8 @@ class DLRHandler:
         else:
             logger.info(
                 f'Receipt {smsc_id} for message {message.message_id}: '
-                f'non-final state {state!r}'
+                f'non-final state {state!r}',
+                extra={'smsc': message.smsc, 'message_id': message.message_id},
             )
 
     @staticmethod
@@ -282,7 +287,8 @@ class DLRHandler:
         except Exception:
             logger.exception(
                 f'{_kind(body)} for {message_id} done, but still stored: '
-                'the next start calls it again'
+                'the next start calls it again',
+                extra={'message_id': message_id},
             )
 
     async def _call(
@@ -303,11 +309,15 @@ class DLRHandler:
             except Exception as e:  # client-supplied URL: anything can go wrong
                 error = repr(e)
             logger.warning(
-                f'{kind} for {message_id}, attempt {attempt + 1}/{attempts}: {error}'
+                f'{kind} for {message_id}, attempt {attempt + 1}/{attempts}: {error}',
+                extra={'message_id': message_id},
             )
             if attempt + 1 < attempts:
                 await asyncio.sleep(2 ** (attempt if body is None else attempt + 1))
-        logger.error(f'{kind} for {message_id} gave up after {attempts} attempts')
+        logger.error(
+            f'{kind} for {message_id} gave up after {attempts} attempts',
+            extra={'message_id': message_id},
+        )
 
 
 def _kind(body: tp.Optional[dict[str, tp.Any]]) -> str:

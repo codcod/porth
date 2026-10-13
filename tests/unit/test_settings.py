@@ -226,6 +226,11 @@ def test_unknown_log_level_raises(tmp_path):
         load(tmp_path, '[porth]\nlog_level = "LOUD"\n')
 
 
+def test_unknown_log_format_raises(tmp_path):
+    with pytest.raises(ValueError, match=r"invalid porth.log_format: 'xml'"):
+        load(tmp_path, '[porth]\nlog_format = "xml"\n')
+
+
 @pytest.mark.parametrize('key', ['dlr_timeout_hours', 'retention_days'])
 def test_store_window_below_one_raises(tmp_path, key):
     with pytest.raises(

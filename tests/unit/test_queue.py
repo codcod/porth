@@ -48,3 +48,15 @@ async def test_qsize_and_task_done():
     queue.task_done()
     queue.task_done()
     await queue.join()
+
+
+@pytest.mark.asyncio
+async def test_lines_carry_message_id_and_smsc(caplog):
+    caplog.set_level('DEBUG', logger='porth.adapters.queue')
+    queue, message = MessageQueue(), msg('x')
+    message.smsc = 'a'
+    await queue.put(message)
+    await queue.get()
+    assert [(r.message_id, r.smsc) for r in caplog.records] == [
+        (message.message_id, 'a')
+    ] * 2

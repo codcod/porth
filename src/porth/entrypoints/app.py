@@ -28,6 +28,8 @@ from porth.service_layer.routing import Router
 from porth.service_layer.sweep import Sweeper
 from porth.service_layer.unit_of_work import AbstractUnitOfWork, SqlAlchemyUnitOfWork
 
+logger = logging.getLogger(__name__)
+
 LOCK_KEY = 0x706F727468  # 'porth' in ASCII
 LOCK_CHECK_SECONDS = 10
 # idle_session_timeout of the lock's session; above LOCK_CHECK_SECONDS
@@ -258,8 +260,9 @@ class Gateway:
             try:
                 await engine.stop()
             except Exception as e:
-                logging.error(
-                    f'SMSC {engine.smsc}: Error stopping delivery engine: {e}'
+                logger.error(
+                    f'SMSC {engine.smsc}: Error stopping delivery engine: {e}',
+                    extra={'smsc': engine.smsc},
                 )
 
         # Stop SMPP clients
@@ -267,7 +270,10 @@ class Gateway:
             try:
                 await client.disconnect()
             except Exception as e:
-                logging.error(f'SMSC {client.label}: Error stopping SMPP client: {e}')
+                logger.error(
+                    f'SMSC {client.label}: Error stopping SMPP client: {e}',
+                    extra={'smsc': client.name},
+                )
 
         # Before the DLR handler, whose session dispatches the sweep's calls
         await self.sweeper.stop()
