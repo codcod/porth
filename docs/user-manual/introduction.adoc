@@ -1,8 +1,9 @@
 = Introduction
 
 {product} is an async SMS gateway written in Python. Clients submit messages over HTTP.
-{product} stores them in PostgreSQL, queues them in-process, and delivers them over SMPP to
-the upstream SMSC each one is routed to, with {product} acting as an ESME client.
+{product} stores them in PostgreSQL or a local SQLite file, queues them in-process, and
+delivers them over SMPP to the upstream SMSC each one is routed to, with {product} acting as
+an ESME client.
 
 == Scope
 
@@ -12,7 +13,7 @@ The minimum viable product covers:
 * Delivery to several upstream SMSCs, each message routed by its destination prefix, over an
   SMPP transceiver bind per SMSC, or a transmitter and a receiver bind.
 * An in-process queue per SMSC, with retries on delivery failure.
-* Messages and their status kept in PostgreSQL across a restart.
+* Messages and their status kept in the database across a restart.
 * Delivery receipts (DLRs) correlated back to the submitting client: a status the HTTP client
   polls or has posted to its `callback_url`, or a callback to a Kannel client's `dlr-url`.
 * Unicode (UCS-2) and concatenated (multi-part) SMS.
@@ -32,8 +33,9 @@ Run {product} only on a trusted network.
 
 == Architecture
 
-{product} is a single process with one external service, PostgreSQL, which holds every
-message and its status. There is no broker or cache. One {product} runs per database: a
+{product} is a single process with one database, which holds every message and its
+status: an external PostgreSQL, or a local SQLite file for a small deployment on one machine
+(see <<Running on SQLite>>). There is no broker or cache. One {product} runs per database: a
 second one exits at start, and one that loses its database session stops (see
 <<Running more than one instance>>).
 
@@ -47,7 +49,7 @@ flowchart TB
     subgraph Core
         Queue["Message queues (in-process, one per SMSC)"]
         Delivery["Delivery engine (retry)"]
-        Store["Message store (PostgreSQL)"]
+        Store["Message store (PostgreSQL or SQLite)"]
         DLR["DLR handler"]
         MO["MO handler"]
     end

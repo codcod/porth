@@ -174,7 +174,7 @@ being made), because it has been deleted (see <<Lifecycle>>).
 Messages sent through the Kannel-compatible API can be polled here too, by the `Message-ID`
 that `sendsms` returned.
 
-{product} keeps message records in PostgreSQL, so a status survives a restart, until the
+{product} keeps message records in its database, so a status survives a restart, until the
 retention window deletes the record (see <<Lifecycle>>).
 
 == Monitoring

@@ -215,9 +215,10 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
                 main_app['uow_factory'], main_app['queues'], [message]
             )
         except IntegrityError as e:
-            # A concurrent submit with the same key committed first
+            # A concurrent submit with the same key committed first (PostgreSQL names
+            # the constraint, messages_idempotency_key_key; SQLite the column)
             first = None
-            if idempotency_key and 'messages_idempotency_key_key' in str(e.orig):
+            if idempotency_key and 'idempotency_key' in str(e.orig):
                 first = await _by_key(main_app, idempotency_key)
             if first is None:
                 raise

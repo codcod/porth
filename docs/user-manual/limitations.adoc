@@ -27,4 +27,8 @@ its message as `sent` (an early part of a long message, or a very fast SMSC) wai
 up to about 15 s; one still waiting at a crash is lost, and that message stays `sent`. | —
 | Scaling | One {product} per database; no standby that takes over without a restart, and
 no horizontal scaling. | —
+| SQLite | One writer at a time, so a lower throughput ceiling than PostgreSQL; no standby,
+and the file on the local disk is the only copy (see <<Running on SQLite>>). A database that
+a newer {product} has written is refused after a downgrade (`SQLite schema version N, this
+porth expects M`). | —
 |===

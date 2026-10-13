@@ -4,9 +4,10 @@
 
 * Python 3.13 or later (pinned in `.python-version`).
 * https://github.com/astral-sh/uv[uv].
-* PostgreSQL 14 or later. `make db-up` starts one in Docker (`compose.yaml`, user, password and
-  database all `porth`, on port 5432). To use another host port, set `POSTGRES_PORT` and
-  change the port in the `db` DSN to match (see <<Configuration>>).
+* A database: PostgreSQL 14 or later, or a local SQLite file (see <<Running on SQLite>>).
+  `make db-up` starts a PostgreSQL in Docker (`compose.yaml`, user, password and database all
+  `porth`, on port 5432). To use another host port, set `POSTGRES_PORT` and change the port in
+  the `db` DSN to match (see <<Configuration>>).
 * Network access from {product} to the upstream SMSC's SMPP port.
 
 {product} installs its SMPP library, `smppai`, from its Git repository. The library is
@@ -23,9 +24,11 @@ make db-up      # PostgreSQL in Docker
 make migrate    # create porth's tables (schema porth)
 ----
 
-`make migrate` runs `alembic upgrade head` against the database in the `db` setting (see
-<<Configuration>>). It is a one-off step: {product} never migrates at startup, so run it
-again before every start after an upgrade. It reads `db` from `config/config.toml`.
+`make migrate` runs `alembic upgrade head` against the PostgreSQL database in the `db`
+setting (see <<Configuration>>). It is a one-off step: {product} never migrates PostgreSQL at
+startup, so run it again before every start after an upgrade. It reads `db` from
+`config/config.toml`. On SQLite skip both `make db-up` and `make migrate`: {product} creates
+its tables at start (see <<Running on SQLite>>).
 
 == Run
 
@@ -37,8 +40,8 @@ make run        # bin/porth config/config.toml
 The gateway listens on the HTTP address from its configuration (default `0.0.0.0:8080`).
 It starts even when an SMSC is unreachable, and retries the bind every 10 s (see
 <<The SMSC bind>>). It does not
-start without its database: an unset `db` or an unreachable PostgreSQL stops it with an
-error.
+start without its database: an unset `db`, an unreachable PostgreSQL or an unwritable SQLite
+file stops it with an error.
 
 Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. Shutdown first closes the HTTP API listener,
 then stops the delivery workers, unbinds from the SMSC, and closes the Kannel listener.
@@ -93,15 +96,66 @@ docker run -d --restart unless-stopped -p 8080:8080 -p 13013:13013 \
 ----
 
 The migrate step reads `db` from the mounted file, as `make migrate` does. Run it before
-every start after an upgrade.
+every start after an upgrade. On SQLite there is no migrate step; see <<Running on SQLite>>
+for the volume the database file needs.
 
 To build the image from a clone instead, run `make docker-build`. It builds the same
 `Dockerfile` into the local image `porth`, which takes the place of
 `ghcr.io/codcod/porth:<version>` in the commands above.
 
+== Running on SQLite
+
+For a small deployment on one machine, {product} can keep its messages in a SQLite file
+instead of PostgreSQL. Set `db` to the file, in SQLAlchemy's aiosqlite form:
+
+[source,toml]
+----
+[porth]
+db = "sqlite+aiosqlite:////var/lib/porth/porth.db"
+----
+
+It needs SQLite 3.35 or later in {product}'s Python (the container image has 3.46);
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"` prints it. An absolute path takes
+four slashes after `sqlite+aiosqlite:`. With three, the path is
+relative to the directory {product} starts in. The directory must exist and be writable;
+{product} creates the file and its tables at the first start, so there is no `make migrate`
+step (`alembic upgrade head` on a SQLite `db` exits with `SQLite: porth creates its schema at
+startup; nothing to migrate`). An in-memory database (`:memory:`) is refused: it would lose
+every message on a restart.
+
+Next to the database {product} keeps `porth.db-wal` and `porth.db-shm` (SQLite's write-ahead
+log) and `porth.db.lock`. Know what you give up before choosing SQLite:
+
+* *One process.* {product} holds an exclusive lock on `<database file>.lock` while it runs,
+  and a second {product} on the same file exits at start (see
+  <<Running more than one instance>>). The database must be on a local disk: network file
+  systems do not keep SQLite's or that lock's guarantees.
+* *The disk is the only copy.* There is no standby. Back up with
+  `sqlite3 porth.db ".backup /path/copy.db"`, which is safe while {product} runs; never copy
+  the file with `cp` while {product} runs, since the copy can miss the write-ahead log.
+* *The files hold every message.* {product} creates the database and its lock file readable
+  by its own user only (mode 0600), and SQLite gives the write-ahead log the same mode. Keep
+  the directory owned by {product}'s user with mode 0700, and protect a `.backup` copy the
+  same way: it holds the same text, numbers and callback URLs.
+* *One writer at a time.* Every database transaction takes SQLite's write lock, so writes are
+  serialised, and the ceiling on messages per second is lower than on PostgreSQL. A
+  transaction that waits more than 10 s for the lock fails as if the database were
+  unreachable.
+* *In a container* the database's directory must be a volume, or the messages go with the
+  container:
++
+[source,bash]
+----
+docker run -d --restart unless-stopped -p 8080:8080 -p 13013:13013 \
+  -v /etc/porth/config.toml:/opt/porth/config/config.toml:ro \
+  -v /var/lib/porth:/var/lib/porth ghcr.io/codcod/porth:<version>
+----
++
+The image runs as a non-root user, so that user must be able to write the volume's directory.
+
 == What a restart keeps
 
-Every message {product} accepts is written to PostgreSQL before the API answers, and every
+Every message {product} accepts is written to its database before the API answers, and every
 status change after that. After a stop or a crash, the next start:
 
 * sends the messages that were not sent yet (`pending` or `queued`, including those waiting
@@ -121,6 +175,14 @@ anything:
 
 ----
 RuntimeError: Another porth already uses this database (advisory lock 482906109032 is held): stop it first
+----
+
+On SQLite the lock is an exclusive lock on `<database file>.lock`, which the operating system
+frees when {product} exits, however it exits. The rest of this section is about PostgreSQL's
+lock:
+
+----
+RuntimeError: Another porth already uses this database (/var/lib/porth/porth.db.lock is locked): stop it first
 ----
 
 Every 10 s, {product} checks that its database session, and with it the lock, is still alive.

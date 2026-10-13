@@ -157,6 +157,6 @@ callback, see <<Delivery reports>>.
   arrive once {product} rebinds, within 10 s.
 * Receipts already received when {product} closes a bind are still applied.
 * A receipt that arrives after a restart still reaches its message, since the SMSC message
-  ids are kept in PostgreSQL with the message.
+  ids are kept in the database with the message.
 * Other inbound messages (mobile-originated SMS) go to the application. See
   <<Mobile-originated messages>>.

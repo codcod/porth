@@ -20,10 +20,11 @@ import pytest_asyncio
 import sqlalchemy as sa
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from monobase.db import make_engine
 from prometheus_client.parser import text_string_to_metric_families
 from smpp import NpiType, SMPPServer, TonType
 
+from porth.adapters.db import make_engine
+from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
 from porth.config.settings import load_settings
 from porth.entrypoints.app import build_app
 from tests.integration.conftest import DSN
@@ -232,9 +233,8 @@ async def clean(database):
     """An empty message store, so recovery sends nothing but this test's messages."""
     engine = make_engine(DSN)
     async with engine.begin() as conn:
-        await conn.execute(
-            sa.text('TRUNCATE porth.messages, porth.smsc_ids, porth.dlr_callbacks')
-        )
+        for table in (dlr_callbacks, smsc_ids, messages):
+            await conn.execute(sa.delete(table))
     await engine.dispose()
 
 

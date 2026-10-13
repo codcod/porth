@@ -4,6 +4,7 @@ from pathlib import Path
 from alembic import context
 from monobase.migrations import run_migrations_online
 
+from porth.adapters.db import sqlite_path
 from porth.adapters.tables import metadata
 from porth.config.settings import load_settings
 
@@ -28,6 +29,10 @@ def get_dsn() -> str:
     dsn = config.attributes.get('dsn') or load_settings(path).db
     if not dsn:
         raise SystemExit(f'db is not set: set db in the [porth] table of {path}')
+    if sqlite_path(dsn) is not None:
+        raise SystemExit(
+            'SQLite: porth creates its schema at startup; nothing to migrate'
+        )
     return dsn
 
 

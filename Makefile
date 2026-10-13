@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-coverage lint format check fmt perf docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
+.PHONY: help install dev-install clean test test-unit test-integration test-integration-sqlite test-coverage lint format check fmt perf docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -60,6 +60,10 @@ test-unit: ## Run unit and e2e tests (no database, no SMSC)
 test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test database)
 	@echo "Running integration tests..."
 	RUN_INTEGRATION_TESTS=1 $(UV) run pytest $(TEST_DIR)/integration -v
+
+test-integration-sqlite: ## Run integration tests on a throwaway SQLite file
+	@echo "Running integration tests on SQLite..."
+	RUN_INTEGRATION_TESTS=1 TEST_PORTH_DB=sqlite+aiosqlite:///$$(mktemp -d)/porth_test.db $(UV) run pytest $(TEST_DIR)/integration -v
 
 test-coverage: ## Run tests with coverage report
 	@echo "Running tests with coverage..."
