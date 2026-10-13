@@ -155,6 +155,24 @@ Each message goes out through one SMSC, chosen once when it is submitted:
 . else `routing.default`;
 . else nothing, and the submit is refused. See <<Routing>>.
 
+With no `routing.default`, the prefix table is an allowlist: a number that no prefix matches
+is refused. List only the country or network prefixes you send to. That also limits what a
+leaked credential can cost in SMS pumping (fraudulent traffic to premium numbers):
+
+[source,toml]
+----
+[porth.routing.prefixes]
+"44" = "op-a"
+"353" = "op-a"
+----
+
+* The allowlist covers the REST API and Kannel requests without `smsc`. A Kannel client
+  that names an SMSC with `smsc` skips the prefix table (step 1), and can send to any number
+  through that SMSC.
+* On the Kannel API the check is per recipient. A recipient that no prefix matches is
+  dropped, and the request still gets `202` if another recipient routes. Only when none
+  routes is it refused with `403` (see <<Responses>>).
+
 A prefix is digits only, and quoted, as a TOML key: `"4470" = "op-b"`. The number is matched
 on its digits only: a `+`, dashes and spaces are dropped, so `+44-7012…`, `+447012…` and
 `447012…` all match `"4470"`. `00` is not rewritten: `00447012…` matches only a rule that

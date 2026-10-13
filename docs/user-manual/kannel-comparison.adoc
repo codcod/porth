@@ -36,8 +36,9 @@ The tables below list every difference, and <<Differences from Kannel 1.4.5>> de
 * There is no admin interface. Monitoring moves to `/metrics`, `/status` and `/ready` (see
   <<Monitoring>>), and links can't be stopped, started or reloaded at runtime.
 * {product} never accepts SMPP binds, so it can't take the place of opensmppbox.
-* There is no TLS on any listener or SMSC link. Both are scope decisions (see <<Scope>>), and
-  <<Limitations>> lists what is not built yet.
+* {product}'s listeners have no TLS of their own: terminate it at a reverse proxy (see
+  <<tls-proxy>>). There is no TLS on the SMSC link. Both are scope decisions (see <<Scope>>),
+  and <<Limitations>> lists what is not built yet.
 * Applications that rely on `post-url`, MO keywords, `deferred`, `priority` or per-user
   settings (`forced-smsc`, `max-messages`, white and black lists) need changes.
 
@@ -89,7 +90,8 @@ Not supported
 supported
 | `sendsms-url`, `sendsms-chars`, `sms-length` | Configurable | Fixed: `/cgi-bin/sendsms`,
 `0123456789+-` | Not supported
-| HTTPS listener (`sendsms-port-ssl`) | Yes | No | Not supported
+| HTTPS listener (`sendsms-port-ssl`) | Yes | No, terminate TLS at a proxy (see
+<<tls-proxy>>) | Different
 | OTA push (`/cgi-bin/sendota`) | Yes | No | Not supported
 |===
 
@@ -210,7 +212,8 @@ Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>)
 `/status`, `/ready` (see <<Monitoring>>) | Different
 | Runtime control (`start-smsc`, `stop-smsc`, `restart`, `reload-lists`, `log-level`) | Yes |
 No | Not supported
-| TLS on listeners and SMSC links | Yes | No (see <<Limitations>>) | Not supported
+| TLS on listeners | Yes | No, terminate TLS at a proxy (see <<tls-proxy>>) | Different
+| TLS on SMSC links | Yes | No (see <<Limitations>>) | Not supported
 | Logging | Log files, syslog, access log | Standard error; JSON lines with `log_format = "json"` | Different
 | Outbound HTTP proxy | Yes | No | Not supported
 |===

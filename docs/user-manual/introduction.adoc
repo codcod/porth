@@ -25,7 +25,8 @@ Some of this is not available yet in this release. <<Limitations>> lists what is
 {product} deliberately does **not** provide the following. These are scope decisions, not
 oversights:
 
-* TLS on any transport.
+* TLS on its listeners. Terminate TLS at a reverse proxy instead (see <<tls-proxy>>).
+* TLS on the SMSC link.
 * Accepting inbound SMPP binds (an SMSC role).
 * Ingress rate limiting, tracing, and hot-reloadable configuration.
 
