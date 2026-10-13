@@ -176,7 +176,8 @@ any other, so a request with bad credentials and no `to` gets this `403`, not a 
   `allow_ip = ["10.1.2.3", "10.1.3.0/24"]`.
 * Per-user `default-smsc` and `forced-smsc` are not supported.
 * The password is never logged. The Kannel listener's access log leaves out the query string.
-* Credentials travel in clear over HTTP. See <<Limitations>>.
+* Credentials travel in clear over HTTP unless a TLS proxy sits in front. See <<tls-proxy>>
+  and <<Limitations>>.
 
 == Delivery reports
 
@@ -237,6 +238,13 @@ replaced even when it is part of a percent-encoding, so write a literal `%` in `
 * A callback still being attempted when {product} stops is made again after the next start,
   so the client can receive the same callback twice (as with Kannel).
 * There is one callback per message, including a long message sent in several parts.
+* Callbacks carry no signature. A receiver can tell {product}'s calls from others by a secret
+  in `dlr-url`, such as `http://app.example/dlr?id=%I&token=<secret>`, and check the token
+  itself. Keep `%` out of the token, or {product} may read part of it as an escape code. A
+  hex token (`openssl rand -hex 32`) has none. {product} stores `dlr-url` with the message, so anyone
+  who can read its database sees the token. A call that goes through is logged by message id
+  only, but a URL {product} can't call at all (it is malformed, or redirects too often)
+  appears in full in the warning.
 
 [source,bash]
 ----

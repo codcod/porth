@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- User manual: *TLS in front of porth* (a Caddy recipe for both listeners, and why
+  `allow_ip` filters nothing behind a proxy); the routing prefix table as a destination
+  allowlist; a secret token in `callback_url` or `dlr-url` to authenticate callbacks
+  (POR-038).
 - JSON logs: `log_format = "json"` writes one JSON object per line (`time`, `level`, `logger`,
   `message`, `exc`), with `message_id` and `smsc` as fields on the lines about a message or
   an SMSC, so Loki, ELK or Datadog index them without parsing rules. The default, `text`,
