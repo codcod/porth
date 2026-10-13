@@ -55,6 +55,7 @@ jobs:
       - run: uv sync --locked
       - run: make test-unit
       - run: make test-integration
+      - run: make test-integration-sqlite
 
   docs:
     runs-on: ubuntu-latest

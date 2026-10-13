@@ -107,7 +107,8 @@ supported
 | Other escape codes (`%n`, `%c`, `%m`, `%b`, `%s` and the rest) | Yes | Left as written |
 Not supported
 | Long message | One report per part | One report per message | Different
-| DLR storage | In memory unless `dlr-storage` names a store | Always in PostgreSQL | Different
+| DLR storage | In memory unless `dlr-storage` names a store | Always in the database
+(PostgreSQL or a SQLite file) | Different
 | Message with no receipt | Waits indefinitely | `expired` after `store.dlr_timeout_hours`,
 with no `dlr-url` fetch | porth only
 | `flush-dlr`, `reroute-dlr` | Yes | No | Not supported
@@ -187,8 +188,8 @@ Not supported
 |===
 | Feature | Kannel 1.4.5 | {product} | Verdict
 
-| Messages kept across a crash | Only with a configured `store-type` | Always, in PostgreSQL
-(see <<What a restart keeps>>) | Different
+| Messages kept across a crash | Only with a configured `store-type`; the default is in
+memory | Always, in PostgreSQL or a SQLite file (see <<What a restart keeps>>) | Different
 | Resend of a temporarily failed message | `sms-resend-freq`, unlimited by default |
 Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>) | Different
 | Queue limits | `sms-*-queue-limit` | No | Not supported

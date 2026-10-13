@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import fcntl
 import functools
 import logging
 import os
@@ -10,10 +11,10 @@ import typing as tp
 
 import sqlalchemy as sa
 from aiohttp import web
-from monobase.db import make_engine
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from porth import metrics
+from porth.adapters.db import ensure_schema, make_engine, sqlite_path
 from porth.adapters.queue import MessageQueue
 from porth.adapters.smpp import SMPPClient
 from porth.config.settings import KannelConfig, Settings
@@ -37,8 +38,9 @@ class Gateway:
     """Everything but the REST listener: recovery, handlers, the Kannel listener,
     one delivery engine and SMPP client (two with transceiver = false) per SMSC.
 
-    One porth per database: start() takes a PostgreSQL advisory lock, so a second
-    gateway on the same database refuses to start instead of sending again."""
+    One porth per database: start() takes a PostgreSQL advisory lock, or on SQLite
+    an exclusive lock on <database file>.lock, so a second gateway on the same
+    database refuses to start instead of sending again."""
 
     def __init__(
         self,
@@ -48,12 +50,17 @@ class Gateway:
         self.settings = settings
         self._engine: tp.Optional[AsyncEngine] = None
         self._lock: tp.Optional[AsyncConnection] = None
+        self._lock_file: tp.Optional[tp.IO[str]] = None  # SQLite's
         self._lock_check: tp.Optional[asyncio.Task] = None
         self._lock_lost = False
         self._stopping = False
         if uow_factory is None:
             if not settings.db:
                 raise ValueError('db is not set: set db in [porth]')
+            if sqlite_path(settings.db) in ('', ':memory:'):
+                raise ValueError(
+                    'db: an in-memory SQLite database is not supported; use a file'
+                )
             engine = self._engine = make_engine(settings.db)
             uow_factory = lambda: SqlAlchemyUnitOfWork(engine)  # noqa: E731
         self.uow_factory = uow_factory
@@ -121,7 +128,26 @@ class Gateway:
         """Start all gateway components."""
         # First: a second porth on this database exits before it sends anything.
         # An injected uow_factory (tests) has no engine and takes no lock.
-        if self._engine is not None:
+        if self._engine is not None and self._engine.dialect.name == 'sqlite':
+            # Not a lock on the database file: closing any descriptor of it drops
+            # SQLite's own locks in this process. The OS frees it when porth dies.
+            database = tp.cast(str, self._engine.url.database)
+            path = f'{database}.lock'
+            # Owner-only, as is a new database file below: they hold messages
+            fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
+            self._lock_file = os.fdopen(fd, 'w')
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError(
+                    f'Another porth already uses this database ({path} is locked): '
+                    f'stop it first'
+                ) from None
+            # SQLite gives its -wal and -shm files the database file's mode. Only a new
+            # file is created here: an existing one is never opened, see above.
+            with contextlib.suppress(FileExistsError):
+                os.close(os.open(database, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        elif self._engine is not None:
             # Session-level and in AUTOCOMMIT, so it never idles in a transaction;
             # kept before the query, so stop() closes it even if the query fails
             self._lock = await self._engine.connect()
@@ -141,6 +167,9 @@ class Gateway:
                     f'{LOCK_KEY} is held): stop it first'
                 )
             self._lock_check = asyncio.create_task(self._check_lock())
+        # After the lock, so a second porth never races the first one's schema
+        if self._engine is not None:
+            await ensure_schema(self._engine)
 
         # Before any worker, listener or bind: what a previous run accepted but did
         # not send goes first. An unreachable database fails the start here.
@@ -274,6 +303,8 @@ class Gateway:
         if self._engine is not None:
             # After a lost lock the server may never answer a graceful close
             await self._engine.dispose(close=not self._lock_lost)
+        if self._lock_file is not None:
+            self._lock_file.close()  # after the engine: nothing writes any more
 
         logging.info('SMS Gateway stopped')
 

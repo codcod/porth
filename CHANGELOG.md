@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- SQLite as an alternative to PostgreSQL, for a small deployment on one machine: set `db` to
+  `sqlite+aiosqlite:////var/lib/porth/porth.db`. porth creates the tables at the first start
+  (no `make migrate`), runs SQLite in WAL mode with one writer at a time, and holds an
+  exclusive lock on `<database file>.lock` so a second porth on the same file exits at start.
+  An in-memory database is refused. The user manual's *Installation* (*Running on SQLite*)
+  states the trade-offs: one process, the local disk as the only copy, a lower write ceiling.
+  `make test-integration-sqlite` runs the integration suite on SQLite, and CI runs both.
 - Bearer tokens on the REST API: each `[porth.http.users.<name>]` table is one caller of
   `/api/v1`, with a `token` (at least 16 characters, unique) and an optional `allow_ip`. A
   request without a valid `Authorization: Bearer <token>` gets `401`. With no users the API

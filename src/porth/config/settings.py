@@ -99,7 +99,8 @@ class Settings:
     mo: MOConfig = dataclasses.field(default_factory=MOConfig)
     store: StoreConfig = dataclasses.field(default_factory=StoreConfig)
 
-    # PostgreSQL DSN (postgresql+asyncpg://...); required to start the gateway
+    # PostgreSQL DSN (postgresql+asyncpg://...) or a SQLite file
+    # (sqlite+aiosqlite:////abs/path.db); required to start the gateway
     db: tp.Optional[str] = None
 
     log_level: str = 'INFO'  # a logging level name

@@ -6,7 +6,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from monobase.repository import AbstractRepository
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
@@ -117,6 +117,12 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
     async def add_smsc_ids(self, message_id: str, smsc: str, ids: list[str]) -> None:
         if not ids:
             return
+        # The same upsert API on both backends, each in its own dialect module
+        insert = (
+            sqlite.insert
+            if self.connection.dialect.name == 'sqlite'
+            else postgresql.insert
+        )
         stmt = insert(smsc_ids).values(
             [{'smsc': smsc, 'smsc_id': i, 'message_id': message_id} for i in ids]
         )
@@ -188,12 +194,13 @@ class SqlAlchemyMessageRepository(AbstractMessageRepository):
             .cte('doomed')
             .prefix_with('MATERIALIZED')
         )
+        # Counted from RETURNING: SQLite's rowcount is -1 for a statement opening WITH
         result = await self.connection.execute(
-            sa.delete(messages).where(
-                messages.c.message_id.in_(sa.select(doomed.c.message_id))
-            )
+            sa.delete(messages)
+            .where(messages.c.message_id.in_(sa.select(doomed.c.message_id)))
+            .returning(messages.c.message_id)
         )
-        return result.rowcount
+        return len(result.all())
 
     @tp.override
     async def add_callback(

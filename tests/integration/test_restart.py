@@ -12,9 +12,9 @@ import pytest_asyncio
 import sqlalchemy as sa
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from monobase.db import make_engine
 from smpp import SMPPServer
 
+from porth.adapters.db import make_engine
 from porth.adapters.tables import dlr_callbacks, messages
 from porth.config.settings import (
     DeliveryConfig,
@@ -26,7 +26,7 @@ from porth.config.settings import (
 )
 from porth.entrypoints import app
 from porth.entrypoints.app import Gateway
-from tests.integration.conftest import DSN
+from tests.integration.conftest import DSN, SQLITE
 from tests.integration.test_repository import pytestmark  # noqa: F401
 from tests.integration.test_smpp_flow import free_port
 
@@ -293,9 +293,12 @@ async def test_a_second_gateway_on_the_same_database_refuses_to_start(database):
     first = gateway(smsc, free_port())
     await first.start()
     try:
-        # A session whose porth vanished unseen ends, and frees the lock
-        assert first._lock is not None
-        assert await first._lock.scalar(sa.text('SHOW idle_session_timeout')) == '30s'
+        if not SQLITE:  # SQLite: the lock file, which the OS frees with the process
+            # A session whose porth vanished unseen ends, and frees the lock
+            assert first._lock is not None
+            assert (
+                await first._lock.scalar(sa.text('SHOW idle_session_timeout')) == '30s'
+            )
         second = gateway(smsc, free_port())
         with pytest.raises(RuntimeError, match='Another porth'):
             await second.start()
@@ -308,6 +311,27 @@ async def test_a_second_gateway_on_the_same_database_refuses_to_start(database):
     await third.stop()
 
 
+@pytest.mark.asyncio
+async def test_a_new_sqlite_database_is_readable_by_its_owner_only(tmp_path):
+    # Its own file, so it runs on either backend's suite
+    gw = Gateway(
+        Settings(
+            db=f'sqlite+aiosqlite:///{tmp_path}/porth.db',
+            kannel=KannelConfig(host='127.0.0.1', port=free_port()),
+        )
+    )
+    await gw.start()
+    try:
+        modes = {p.name: p.stat().st_mode & 0o777 for p in tmp_path.iterdir()}
+    finally:
+        await gw.stop()
+    assert modes == {
+        name: 0o600
+        for name in ('porth.db', 'porth.db-wal', 'porth.db-shm', 'porth.db.lock')
+    }
+
+
+@pytest.mark.skipif(SQLITE, reason='a PostgreSQL advisory lock')
 @pytest.mark.asyncio
 async def test_a_gateway_that_loses_its_lock_shuts_down(database, monkeypatch):
     monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.05)
@@ -335,6 +359,7 @@ async def test_a_gateway_that_loses_its_lock_shuts_down(database, monkeypatch):
     assert kills == [(os.getpid(), signal.SIGTERM)]
 
 
+@pytest.mark.skipif(SQLITE, reason='a PostgreSQL advisory lock')
 @pytest.mark.asyncio
 async def test_a_slow_stop_keeps_the_lock_past_the_idle_timeout(database, monkeypatch):
     monkeypatch.setattr(app, 'LOCK_CHECK_SECONDS', 0.2)

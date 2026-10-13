@@ -2,7 +2,7 @@
 
 {product}'s source tree includes one end-to-end test for each feature listed in this chapter,
 in `tests/integration/test_features.py`. Each test starts {product} the way `bin/porth` does,
-from a configuration file, against a real PostgreSQL. It then drives {product} only from
+from a configuration file, against a real database. It then drives {product} only from
 outside:
 
 * over the HTTP API and the Kannel-compatible API;
@@ -66,13 +66,15 @@ every part has its receipt, then becomes `delivered`, and its `callback_url` is 
 
 == Running the tests
 
-The tests need PostgreSQL. They create and use their own `porth_test` database, and empty its
-tables before each test, so never point them at a database holding real messages.
+The tests need a database. On PostgreSQL they create and use their own `porth_test`
+database, and empty its tables before each test, so never point them at a database holding
+real messages.
 
 [source,bash]
 ----
 make db-up
 make test-integration                     # every PostgreSQL test, these included
+make test-integration-sqlite              # the same tests on a throwaway SQLite file
 ----
 
 To run only these tests, against a database elsewhere:

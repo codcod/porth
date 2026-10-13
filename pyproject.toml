@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.13",
     "prometheus-client>=0.26.0",
+    "aiosqlite>=0.22.1",
 ]
 
 [dependency-groups]

@@ -36,6 +36,10 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
 `make config-check` (`bin/porth --check <file>`) runs the same checks on
 `config/config.toml` without connecting to anything.
 
+{product}, and `make config-check`, also refuse an in-memory SQLite `db`
+(`sqlite+aiosqlite:///:memory:`): `db: an in-memory SQLite database is not supported; use a
+file`.
+
 == Settings
 
 Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
@@ -71,9 +75,11 @@ Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 before it becomes `expired`. At least `1`. See <<Lifecycle>>.
 | `store.retention_days` | `7` | Days after it was accepted that a finished message is
 deleted (later while a status call is still being made). At least `1`. See <<Lifecycle>>.
-| `db` | unset | **Required.** The PostgreSQL DSN, in SQLAlchemy's asyncpg form:
-`postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`. The shipped `config/config.toml`
-points at `make db-up`'s database. `make migrate` reads it from the same file.
+| `db` | unset | **Required.** The database, as a SQLAlchemy DSN. PostgreSQL in the asyncpg
+form, `postgresql+asyncpg://USER:PASSWORD@HOST:5432/porth`, or a SQLite file in the aiosqlite
+form, `sqlite+aiosqlite:////var/lib/porth/porth.db` (four slashes for an absolute path; see
+<<Running on SQLite>>). The shipped `config/config.toml` points at `make db-up`'s database.
+`make migrate` reads it from the same file.
 | `log_level` | `INFO` | Level of the log output, in UTC.
 |===
 

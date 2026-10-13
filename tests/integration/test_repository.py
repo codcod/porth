@@ -1,22 +1,24 @@
-"""The message repository against a real PostgreSQL (make db-up migrate first)."""
+"""The message repository against a real PostgreSQL (make db-up migrate first) or a
+SQLite file (make test-integration-sqlite)."""
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
-from monobase.db import make_engine
 from sqlalchemy.exc import IntegrityError
 
+from porth.adapters.db import make_engine
 from porth.adapters.tables import dlr_callbacks, messages, smsc_ids
 from porth.domain.model import MessageStatus, SMSMessage
 from porth.service_layer.unit_of_work import SqlAlchemyUnitOfWork
-from tests.integration.conftest import DSN
+from tests.integration.conftest import DSN, SQLITE
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get('RUN_INTEGRATION_TESTS'),
-    reason='needs PostgreSQL: RUN_INTEGRATION_TESTS=1 (make test-integration)',
+    reason='needs a database: RUN_INTEGRATION_TESTS=1 (make test-integration)',
 )
 
 
@@ -148,6 +150,45 @@ async def test_smsc_id_maps_to_the_latest_message(db):
         assert await uow.messages.get_by_smsc_id_for_update('a', 'nope') is None
         assert await uow.messages.get_by_smsc_id_for_update('b', smsc_id) is None
     assert got is not None and got.message_id == second.message_id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_read_then_write_units_of_work_all_commit(db):
+    # Receipts and delivery workers read a row, then write it. On SQLite that holds
+    # only with BEGIN IMMEDIATE and a busy_timeout (porth.adapters.db).
+    engine, ids = db
+    received, sent = new(ids, MessageStatus.SENT), new(ids)
+    smsc_id = f'smsc-{received.message_id}'
+    await add(engine, received, sent)
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        await uow.messages.add_smsc_ids(received.message_id, 'a', [smsc_id])
+        await uow.commit()
+
+    async def receipt() -> None:
+        async with SqlAlchemyUnitOfWork(engine) as uow:
+            message = await uow.messages.get_by_smsc_id_for_update('a', smsc_id)
+            assert message is not None
+            await asyncio.sleep(0.01)  # the others start meanwhile
+            message.retry_count += 1
+            await uow.messages.update(message)
+            await uow.commit()
+
+    async def delivery(n: int) -> None:
+        async with SqlAlchemyUnitOfWork(engine) as uow:
+            message = await uow.messages.get(sent.message_id)
+            assert message is not None
+            await asyncio.sleep(0.01)
+            message.status = MessageStatus.SENT
+            await uow.messages.update(message)
+            await uow.messages.add_smsc_ids(message.message_id, 'a', [f'{smsc_id}-{n}'])
+            await uow.commit()
+
+    await asyncio.gather(*(receipt() for _ in range(20)), *map(delivery, range(20)))
+    async with SqlAlchemyUnitOfWork(engine) as uow:
+        got = await uow.messages.get(received.message_id)
+        assert got is not None and got.retry_count == 20  # no update lost
+        got = await uow.messages.get_by_smsc_id_for_update('a', f'{smsc_id}-19')
+        assert got is not None and got.message_id == sent.message_id
 
 
 @pytest.mark.asyncio
@@ -297,6 +338,7 @@ async def test_unreceipted_is_sent_awaiting_a_receipt_before_cutoff(db):
     assert got == [older.message_id, newer.message_id]
 
 
+@pytest.mark.skipif(SQLITE, reason='SQLite locks the whole database, not a row')
 @pytest.mark.asyncio
 async def test_unreceipted_skips_a_row_another_transaction_holds(db):
     engine, ids = db
@@ -371,7 +413,7 @@ async def test_idempotency_key_is_unique_and_found(db):
     engine, ids = db
     first = new(ids, idempotency_key='k-2')
     await add(engine, first, new(ids), new(ids))  # no key: NULLs never collide
-    with pytest.raises(IntegrityError, match='messages_idempotency_key_key'):
+    with pytest.raises(IntegrityError, match='idempotency_key'):
         await add(engine, new(ids, idempotency_key='k-2'))
     async with SqlAlchemyUnitOfWork(engine) as uow:
         assert await uow.messages.get_by_idempotency_key('k-2') == first

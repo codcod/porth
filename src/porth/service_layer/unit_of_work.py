@@ -17,6 +17,13 @@ class AbstractUnitOfWork(uow.AbstractUnitOfWork):
 class SqlAlchemyUnitOfWork(AbstractUnitOfWork, uow.SqlAlchemyUnitOfWork):
     @tp.override
     async def __aenter__(self) -> tp.Self:
-        await super().__aenter__()
+        try:
+            await super().__aenter__()
+        except BaseException:
+            # __aexit__ never runs for a failed __aenter__, so the connection would
+            # stay checked out: SQLite's BEGIN IMMEDIATE fails once busy_timeout passes
+            if (connection := getattr(self, 'connection', None)) is not None:
+                await connection.close()
+            raise
         self.messages = SqlAlchemyMessageRepository(self.connection)
         return self

@@ -42,7 +42,7 @@ cd porth
 # Setup development environment
 make dev
 
-# PostgreSQL (Docker) and porth's tables
+# PostgreSQL (Docker) and porth's tables; on SQLite skip both (see the manual)
 make db-up
 make migrate
 
@@ -93,13 +93,13 @@ make help
 ## Layout
 
 The code follows the layering of the monolith's traffic service. Under `src/porth/`:
-`domain/` holds the message model, with no I/O. `adapters/` holds the PostgreSQL tables and
-repository, the SMPP client, the in-process queue, and the outbound HTTP client for DLR and
+`domain/` holds the message model, with no I/O. `adapters/` holds the database engine, tables
+and repository, the SMPP client, the in-process queue, and the outbound HTTP client for DLR and
 MO calls. `service_layer/` holds the unit of work, the delivery engine, the receipt, MO and
 sweep handlers, routing, and the `submit` and `recover` services. `entrypoints/` holds the REST
 and Kannel aiohttp apps and `build_app()`, which `bin/porth` runs. Tests are grouped into
-`tests/unit`, `tests/e2e`, `tests/integration` (PostgreSQL, `RUN_INTEGRATION_TESTS=1`) and
-`tests/performance/k6`.
+`tests/unit`, `tests/e2e`, `tests/integration` (PostgreSQL or SQLite, `RUN_INTEGRATION_TESTS=1`)
+and `tests/performance/k6`.
 
 ## Configuration
 
