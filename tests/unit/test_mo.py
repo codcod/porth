@@ -180,6 +180,8 @@ async def test_reply_not_stored_is_not_sent(caplog):
     _, queue, store = await forward(fail=OSError('database down'))
     assert queue.empty()
     assert 'reply not stored, not sent' in caplog.text
+    (record,) = [r for r in caplog.records if 'reply not stored' in r.message]
+    assert record.smsc == 'a'
 
 
 @pytest.mark.asyncio

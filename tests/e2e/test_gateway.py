@@ -238,7 +238,10 @@ async def test_recovery_puts_high_priority_first(uow_factory, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_recovery_reroutes_a_message_whose_smsc_is_gone(uow_factory, monkeypatch):
+async def test_recovery_reroutes_a_message_whose_smsc_is_gone(
+    uow_factory, monkeypatch, caplog
+):
+    caplog.set_level('INFO', logger='porth.service_layer.services')
     repo = uow_factory.repo
     kept = stored(repo, MessageStatus.QUEUED, 4, smsc='a', to='447000000001')
     removed = stored(repo, MessageStatus.QUEUED, 3, smsc='gone', to='447000000002')
@@ -255,8 +258,37 @@ async def test_recovery_reroutes_a_message_whose_smsc_is_gone(uow_factory, monke
         assert repo.messages[removed.message_id].smsc == 'b'
         assert repo.messages[unrouted.message_id].smsc == 'a'
         assert repo.messages[lost.message_id].status == MessageStatus.FAILED
+        fields = {
+            (r.message_id, r.smsc)
+            for r in caplog.records
+            if r.name == 'porth.service_layer.services'
+        }
+        assert fields == {
+            (removed.message_id, 'b'),
+            (unrouted.message_id, 'a'),
+            (lost.message_id, 'gone'),
+        }
     finally:
         await gateway.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_errors_carry_the_smsc(uow_factory, monkeypatch, caplog):
+    caplog.set_level('ERROR', logger='porth.entrypoints.app')
+    settings = two_smscs()
+    settings.smsc['b'] = smsc(transceiver=False)  # labels 'b (tx)', 'b (rx)'
+    gateway = Gateway(settings, uow_factory)
+
+    async def broken():
+        raise RuntimeError('boom')
+
+    for engine in gateway.engines.values():
+        monkeypatch.setattr(engine, 'stop', broken)
+    for client in gateway.smpp_clients:
+        monkeypatch.setattr(client, 'disconnect', broken)
+    await gateway.stop()
+    smscs = [r.smsc for r in caplog.records if r.name == 'porth.entrypoints.app']
+    assert sorted(smscs) == ['a', 'a', 'b', 'b', 'b']
 
 
 @pytest.mark.asyncio

@@ -243,7 +243,10 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         return _answer(503, 'Temporal failure, try again later.')
     for message in messages:
         metrics.submitted.labels('kannel').inc()
-        logger.info(f'Kannel API: Queued message {message.message_id}')
+        logger.info(
+            f'Kannel API: Queued message {message.message_id}',
+            extra={'message_id': message.message_id, 'smsc': message.smsc},
+        )
 
     # The Message-ID lines are porth's addition to Kannel's answer
     ids = ''.join(f'\nMessage-ID: {m.message_id}' for m in messages)

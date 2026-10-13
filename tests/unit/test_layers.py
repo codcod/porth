@@ -1,6 +1,6 @@
 """The layers' dependency direction (design.md §4.6): domain imports nothing from
 porth, adapters never import the service layer or entrypoints, the service layer never
-imports entrypoints. config and metrics are not layers."""
+imports entrypoints. config, metrics and logs are not layers."""
 
 import ast
 import pathlib

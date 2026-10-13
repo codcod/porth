@@ -9,6 +9,10 @@ from porth.domain.model import MessageStatus, SMSMessage
 logger = logging.getLogger(__name__)
 
 
+def _fields(message: SMSMessage) -> dict[str, tp.Any]:
+    return {'message_id': message.message_id, 'smsc': message.smsc}
+
+
 class MessageQueue:
     """Async message queue for SMS messages: high priority first, FIFO within a level."""
 
@@ -25,16 +29,24 @@ class MessageQueue:
         try:
             level = 0 if message.priority == 'high' else 1
             await self._queue.put((level, next(self._seq), message))
-            logger.debug(f'Message {message.message_id} added to queue')
+            logger.debug(
+                f'Message {message.message_id} added to queue', extra=_fields(message)
+            )
         except asyncio.QueueFull:
-            logger.error(f'Queue full, cannot add message {message.message_id}')
+            logger.error(
+                f'Queue full, cannot add message {message.message_id}',
+                extra=_fields(message),
+            )
             raise
 
     async def get(self, timeout: tp.Optional[float] = None) -> SMSMessage:
         """Get a message from the queue."""
         try:
             *_, message = await asyncio.wait_for(self._queue.get(), timeout=timeout)
-            logger.debug(f'Message {message.message_id} retrieved from queue')
+            logger.debug(
+                f'Message {message.message_id} retrieved from queue',
+                extra=_fields(message),
+            )
             return message
         except asyncio.TimeoutError:
             raise

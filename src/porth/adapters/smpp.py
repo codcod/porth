@@ -109,6 +109,7 @@ class SMPPClient:
         self.port = config.port if port is None else port
         # Two binds of one SMSC are told apart in the logs
         self.label = name if bind == 'trx' else f'{name} ({bind})'
+        self.log = logging.LoggerAdapter(logger, {'smsc': name}, merge_extra=True)
         self._pacer = Pacer(throughput) if throughput is not None else None
         self.on_receipt = on_receipt
         self.on_mo = on_mo
@@ -147,13 +148,15 @@ class SMPPClient:
                 )
             # BaseException incl. CancelledError: log it, smppai has closed the bind.
             except BaseException as e:
-                logger.error(f'SMSC {self.label}: Failed to connect SMPP client: {e!r}')
+                self.log.error(
+                    f'SMSC {self.label}: Failed to connect SMPP client: {e!r}'
+                )
                 raise
 
             self._bind = stack
             self.client = inbound.raw
             self._inbound = asyncio.create_task(self._consume(inbound))
-            logger.info(
+            self.log.info(
                 f'SMSC {self.label}: SMPP client connected to '
                 f'{self.config.host}:{self.port}'
             )
@@ -179,7 +182,7 @@ class SMPPClient:
                 await self._keeper
             self._keeper = None
         await self._drop()
-        logger.info(f'SMSC {self.label}: SMPP client disconnected')
+        self.log.info(f'SMSC {self.label}: SMPP client disconnected')
 
     async def send_message(self, message: SMSMessage) -> dict[str, tp.Any]:
         """Send SMS message via SMPP, reconnecting lazily if the bind was lost."""
@@ -236,12 +239,16 @@ class SMPPClient:
                     else '',
                 )
         except Exception as e:
-            logger.error(f'SMSC {self.label}: Failed to send message via SMPP: {e}')
+            self.log.error(
+                f'SMSC {self.label}: Failed to send message via SMPP: {e}',
+                extra={'message_id': message.message_id},
+            )
             # The whole message is retried; parts the SMSC already accepted are orphans
             sent = getattr(e, 'sent_message_ids', [])
             if sent:
-                logger.warning(
-                    f'Message {message.message_id}: parts already accepted as {sent}'
+                self.log.warning(
+                    f'Message {message.message_id}: parts already accepted as {sent}',
+                    extra={'message_id': message.message_id},
                 )
             # An SMSC response with an error command_status came over a healthy bind,
             # unless it says the SMSC lost our session; anything else (timeout, I/O,
@@ -256,7 +263,10 @@ class SMPPClient:
                 await self._drop()
             raise
 
-        logger.info(f'Message {message.message_id} sent via SMPP')
+        self.log.info(
+            f'Message {message.message_id} sent via SMPP',
+            extra={'message_id': message.message_id},
+        )
         return {
             'message_id': message.message_id,
             'status': 'submitted',
@@ -278,7 +288,7 @@ class SMPPClient:
                     else ('MO', self.on_mo)
                 )
                 if handler is None:
-                    logger.info(
+                    self.log.info(
                         f'SMSC {self.label}: Inbound {kind} from {msg.sender} dropped'
                     )
                     continue
@@ -287,9 +297,9 @@ class SMPPClient:
                     if result is not None:  # on_receipt's: the receipt is stored
                         await result
                 except Exception:
-                    logger.exception(f'SMSC {self.label}: Error handling {kind}')
+                    self.log.exception(f'SMSC {self.label}: Error handling {kind}')
         except Exception as e:
-            logger.warning(f'SMSC {self.label}: SMPP inbound stream ended: {e!r}')
+            self.log.warning(f'SMSC {self.label}: SMPP inbound stream ended: {e!r}')
 
     async def _drop(self) -> None:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
@@ -299,7 +309,9 @@ class SMPPClient:
             try:
                 await stack.aclose()
             except Exception as e:
-                logger.error(f'SMSC {self.label}: Error disconnecting SMPP client: {e}')
+                self.log.error(
+                    f'SMSC {self.label}: Error disconnecting SMPP client: {e}'
+                )
         if consumer is not None:
             # shield: a cancelled caller (disconnect() stopping the rebind loop)
             # must not cancel the drain; the consumer ends on smppai's end marker.

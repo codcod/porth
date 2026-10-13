@@ -31,6 +31,7 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
   user's (`invalid porth.http.users.b.token: the same as porth.http.users.a.token`);
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
+* `log_format` is neither `text` nor `json` (`invalid porth.log_format: 'xml'`);
 * the file has no `[porth]` table.
 
 `make config-check` (`bin/porth --check <file>`) runs the same checks on
@@ -81,6 +82,12 @@ form, `sqlite+aiosqlite:////var/lib/porth/porth.db` (four slashes for an absolut
 <<Running on SQLite>>). The shipped `config/config.toml` points at `make db-up`'s database.
 `make migrate` reads it from the same file.
 | `log_level` | `INFO` | Level of the log output, in UTC.
+| `log_format` | `text` | `text`: one plain line per record on standard error. `json`: one
+JSON object per line, for a log shipper such as Loki, ELK or Datadog, with the keys `time`
+(UTC, `2026-10-12T10:39:12.345Z`), `level`, `logger`, `message` (the text line's message),
+`exc` (a traceback, when there is one), and `message_id` and `smsc` on the lines about a
+message or an SMSC. The REST API's access lines add aiohttp's own fields, such as
+`remote_address` and `response_status`.
 |===
 
 == SMSCs
@@ -162,6 +169,7 @@ A production file:
 [porth]
 db = "postgresql+asyncpg://porth:secret@db.internal:5432/porth"
 log_level = "INFO"
+# log_format = "json"   # one JSON object per line
 
 [porth.http]
 host = "0.0.0.0"

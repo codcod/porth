@@ -65,6 +65,7 @@ class DeliveryEngine:
         self.workers: list[asyncio.Task] = []
         self.running = False
         self._retries: set[asyncio.Task] = set()
+        self.log = logging.LoggerAdapter(logger, {'smsc': smsc}, merge_extra=True)
 
     async def start(self) -> None:
         """Start the delivery engine workers."""
@@ -80,7 +81,7 @@ class DeliveryEngine:
             )
             self.workers.append(worker)
 
-        logger.info(
+        self.log.info(
             f'SMSC {self.smsc}: Delivery engine started with '
             f'{self.settings.delivery.worker_count} workers'
         )
@@ -102,11 +103,11 @@ class DeliveryEngine:
         await asyncio.gather(*tasks, return_exceptions=True)
         self.workers.clear()
 
-        logger.info(f'SMSC {self.smsc}: Delivery engine stopped')
+        self.log.info(f'SMSC {self.smsc}: Delivery engine stopped')
 
     async def _delivery_worker(self, worker_name: str) -> None:
         """Delivery worker that processes messages from the queue."""
-        logger.info(f'Delivery worker {worker_name} started')
+        self.log.info(f'Delivery worker {worker_name} started')
 
         while self.running:
             try:
@@ -125,9 +126,9 @@ class DeliveryEngine:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f'Error in delivery worker {worker_name}: {e}')
+                self.log.error(f'Error in delivery worker {worker_name}: {e}')
 
-        logger.info(f'Delivery worker {worker_name} stopped')
+        self.log.info(f'Delivery worker {worker_name} stopped')
 
     async def _requeue_later(self, message: SMSMessage, delay: int) -> None:
         """Put message back on the queue after delay seconds."""
@@ -138,21 +139,28 @@ class DeliveryEngine:
         """Process a single message."""
         # Every attempt, a retry included, comes through here (design.md §4.2)
         if message.valid_until and datetime.now(timezone.utc) >= message.valid_until:
-            logger.info(
+            self.log.info(
                 f'Message {message.message_id} expired before sending '
-                f'(valid until {message.valid_until.isoformat()})'
+                f'(valid until {message.valid_until.isoformat()})',
+                extra={'message_id': message.message_id},
             )
             message.status = MessageStatus.EXPIRED
             await self._finalize(message)
             return
 
         try:
-            logger.info(f'Processing message {message.message_id}')
+            self.log.info(
+                f'Processing message {message.message_id}',
+                extra={'message_id': message.message_id},
+            )
 
             result = await self.smpp_client.send_message(message)
 
         except MessageError as e:
-            logger.error(f'Message {message.message_id} rejected permanently: {e}')
+            self.log.error(
+                f'Message {message.message_id} rejected permanently: {e}',
+                extra={'message_id': message.message_id},
+            )
             message.status = MessageStatus.FAILED
             await self._finalize(message)
             return
@@ -167,14 +175,18 @@ class DeliveryEngine:
                 and e.command_status is not None
                 and e.command_status not in _TRANSIENT
             ):
-                logger.error(
+                self.log.error(
                     f'Message {message.message_id} rejected by the SMSC '
-                    f'({_status_name(e.command_status)}), not retried'
+                    f'({_status_name(e.command_status)}), not retried',
+                    extra={'message_id': message.message_id},
                 )
                 message.status = MessageStatus.FAILED
                 await self._finalize(message)
                 return
-            logger.error(f'Failed to deliver message {message.message_id}: {e}')
+            self.log.error(
+                f'Failed to deliver message {message.message_id}: {e}',
+                extra={'message_id': message.message_id},
+            )
             await self._handle_delivery_failure(message, str(e))
             return
 
@@ -193,17 +205,22 @@ class DeliveryEngine:
                 break
             except Exception:
                 if wait is None:
-                    logger.exception(
+                    self.log.exception(
                         f'Message {message.message_id} sent as {ids}, but not saved '
-                        'as sent: its receipts will not match, and a restart resends it'
+                        'as sent: its receipts will not match, and a restart resends it',
+                        extra={'message_id': message.message_id},
                     )
                     break
-                logger.warning(
+                self.log.warning(
                     f'Message {message.message_id} sent as {ids}, not saved yet; '
-                    f'retrying in {wait}s'
+                    f'retrying in {wait}s',
+                    extra={'message_id': message.message_id},
                 )
                 await asyncio.sleep(wait)
-        logger.info(f'Message {message.message_id} sent through SMSC {self.smsc}')
+        self.log.info(
+            f'Message {message.message_id} sent through SMSC {self.smsc}',
+            extra={'message_id': message.message_id},
+        )
 
     async def _save(self, message: SMSMessage) -> None:
         """Write the message's (non-final) status and retry count; log a failed write."""
@@ -227,11 +244,11 @@ class DeliveryEngine:
             return
         self.dlr_handler.dispatch(call)
 
-    @staticmethod
-    def _not_saved(message: SMSMessage) -> None:
-        logger.exception(
+    def _not_saved(self, message: SMSMessage) -> None:
+        self.log.exception(
             f'Message {message.message_id}: {message.status.value} '
-            f'(attempt {message.retry_count}) not saved'
+            f'(attempt {message.retry_count}) not saved',
+            extra={'message_id': message.message_id},
         )
 
     async def _handle_delivery_failure(self, message: SMSMessage, error: str) -> None:
@@ -246,16 +263,18 @@ class DeliveryEngine:
 
         if message.retry_count < config.max_retries:
             delay = retry_delay(message.retry_count, config)
-            logger.info(
-                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, retrying in {delay}s'
+            self.log.info(
+                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, retrying in {delay}s',
+                extra={'message_id': message.message_id},
             )
             metrics.retries.labels(self.smsc).inc()
             task = asyncio.create_task(self._requeue_later(message, delay))
             self._retries.add(task)
             task.add_done_callback(self._retries.discard)
         else:
-            logger.error(
-                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, giving up'
+            self.log.error(
+                f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, giving up',
+                extra={'message_id': message.message_id},
             )
 
 

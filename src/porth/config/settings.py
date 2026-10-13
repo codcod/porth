@@ -104,13 +104,14 @@ class Settings:
     db: tp.Optional[str] = None
 
     log_level: str = 'INFO'  # a logging level name
+    log_format: str = 'text'  # or 'json': one JSON object per line
 
 
 def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settings:
     """
     Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
-    An unknown key, a wrong type, a missing required key, an unknown log_level or a
-    store window below 1 raises ValueError naming the key.
+    An unknown key, a wrong type, a missing required key, an unknown log_level or
+    log_format, or a store window below 1 raises ValueError naming the key.
     """
     data = monobase.config.read_config(os.fspath(path))
     if not isinstance(data.get('porth'), dict):
@@ -118,6 +119,8 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     settings = _build(Settings, data['porth'], 'porth')
     if settings.log_level not in logging.getLevelNamesMapping():
         raise ValueError(f'invalid porth.log_level: {settings.log_level!r}')
+    if settings.log_format not in ('text', 'json'):
+        raise ValueError(f'invalid porth.log_format: {settings.log_format!r}')
     for f in dataclasses.fields(StoreConfig):
         if getattr(settings.store, f.name) < 1:
             raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')

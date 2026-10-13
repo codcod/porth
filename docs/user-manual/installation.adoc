@@ -99,6 +99,9 @@ The migrate step reads `db` from the mounted file, as `make migrate` does. Run i
 every start after an upgrade. On SQLite there is no migrate step; see <<Running on SQLite>>
 for the volume the database file needs.
 
+The gateway logs to standard error. For a log shipper (Loki, ELK, Datadog), set
+`log_format = "json"` for one JSON object per line (see <<Configuration>>).
+
 To build the image from a clone instead, run `make docker-build`. It builds the same
 `Dockerfile` into the local image `porth`, which takes the place of
 `ghcr.io/codcod/porth:<version>` in the commands above.

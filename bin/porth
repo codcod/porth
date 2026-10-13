@@ -2,12 +2,13 @@
 """Run porth on a config file (default config/config.toml), or --check the file."""
 
 import argparse
+import logging
 
 from aiohttp import web
-from monobase.config import setup_logging
 
 from porth.config.settings import load_settings
 from porth.entrypoints.app import Gateway, build_app
+from porth.logs import setup_logging
 
 parser = argparse.ArgumentParser(prog='porth')
 parser.add_argument('config', nargs='?', default='config/config.toml')
@@ -21,5 +22,12 @@ settings = load_settings(args.config)
 if args.check:
     Gateway(settings)
 else:
-    setup_logging(settings.log_level)
-    web.run_app(build_app(settings), host=settings.http.host, port=settings.http.port)
+    setup_logging(settings.log_level, settings.log_format)
+    # json: aiohttp's stdout banner as a log line, so the whole output parses
+    banner = logging.getLogger('porth').info if settings.log_format == 'json' else print
+    web.run_app(
+        build_app(settings),
+        host=settings.http.host,
+        port=settings.http.port,
+        print=banner,
+    )

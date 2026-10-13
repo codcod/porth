@@ -12,6 +12,8 @@ from porth.service_layer.dlr import DLRHandler
 from porth.service_layer.routing import Router
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
+logger = logging.getLogger(__name__)
+
 
 async def submit(
     uow_factory: tp.Callable[[], AbstractUnitOfWork],
@@ -64,15 +66,17 @@ async def _reroute(
     was = message.smsc
     try:
         message.smsc = router.route(message.destination_addr)
-        logging.info(
+        logger.info(
             f'Message {message.message_id}: SMSC {was!r} is not configured, '
-            f'rerouted to {message.smsc!r}'
+            f'rerouted to {message.smsc!r}',
+            extra={'message_id': message.message_id, 'smsc': message.smsc},
         )
     except NoRoute as e:
         message.status = MessageStatus.FAILED
-        logging.warning(
+        logger.warning(
             f'Message {message.message_id}: SMSC {was!r} is not configured '
-            f'and {e}: failed'
+            f'and {e}: failed',
+            extra={'message_id': message.message_id, 'smsc': was},
         )
     # A failed one's call is stored, not dispatched: resume() makes it, once
     # the handler has started

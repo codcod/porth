@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- JSON logs: `log_format = "json"` writes one JSON object per line (`time`, `level`, `logger`,
+  `message`, `exc`), with `message_id` and `smsc` as fields on the lines about a message or
+  an SMSC, so Loki, ELK or Datadog index them without parsing rules. The default, `text`,
+  is unchanged. The user manual's *Configuration* covers it (POR-043).
 - SQLite as an alternative to PostgreSQL, for a small deployment on one machine: set `db` to
   `sqlite+aiosqlite:////var/lib/porth/porth.db`. porth creates the tables at the first start
   (no `make migrate`), runs SQLite in WAL mode with one writer at a time, and holds an
