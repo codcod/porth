@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- `http.callback_retry_minutes` sets how long a REST status callback is retried (default 5:
+  today's 8 attempts over about 4 minutes). Waits double from 2 s up to 300 s, so a receiver
+  down for an hour gets every final status with a window of 65. A restart starts the window
+  again; a Kannel `dlr-url` keeps its 3 attempts (POR-045).
 - TLS to an SMSC: `tls = true` in a `[porth.smsc.<name>]` table binds over TLS (both binds
   with `transceiver = false`), always verifying the SMSC's certificate and host name, against
   the system CAs or a `tls_ca_file` for a private CA or a self-signed certificate. Kannel's

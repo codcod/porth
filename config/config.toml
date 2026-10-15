@@ -10,6 +10,7 @@ log_level = "DEBUG"
 [porth.http]
 host = "0.0.0.0"
 port = 8080
+callback_retry_minutes = 5  # REST status callback retry window
 
 # REST callers, one table each, under any name; without any, /api/v1 is open.
 # A request sends "Authorization: Bearer <token>".

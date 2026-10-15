@@ -359,12 +359,17 @@ async def test_retries_until_2xx(store, handler, recorder):
 
 
 @pytest.mark.asyncio
-async def test_gives_up_after_three_attempts(store, handler, recorder):
+async def test_gives_up_after_three_attempts(store, uow_factory, recorder, monkeypatch):
+    waits = record_sleeps(monkeypatch)
+    handler = DLRHandler(uow_factory, rest_window=3600)  # the window is REST-only
+    await handler.start()
     recorder.statuses = [500] * 5
     sent(store, ['s1'], 'kannel', recorder.url(), dlr_mask=1)
     await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
+    await handler.stop()
     assert len(recorder.requests) == 3
+    assert waits == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -495,11 +500,7 @@ async def test_kannel_message_still_gets_only_its_get(store, handler, recorder):
     assert [r.method for r in recorder.requests] == ['GET']
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('statuses, made', [([500] * 3, 4), ([500] * 20, 8)])
-async def test_rest_retries_up_to_8_attempts(
-    store, uow_factory, recorder, monkeypatch, statuses, made
-):
+def record_sleeps(monkeypatch):
     waits = []
     real_sleep = asyncio.sleep
 
@@ -508,15 +509,31 @@ async def test_rest_retries_up_to_8_attempts(
         await real_sleep(0)
 
     monkeypatch.setattr(dlr_module.asyncio, 'sleep', sleep)
-    handler = DLRHandler(uow_factory)
+    return waits
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'window, statuses, waits_made',
+    [
+        (300, [500] * 2, [2, 4]),  # a 2xx on attempt 3 stops at once
+        (300, [500] * 20, [2, 4, 8, 16, 32, 64, 128]),  # the default: 8 attempts
+        (1200, [500] * 20, [2, 4, 8, 16, 32, 64, 128, 256, 300, 300]),
+    ],
+)
+async def test_rest_retries_within_its_window(
+    store, uow_factory, recorder, monkeypatch, window, statuses, waits_made
+):
+    waits = record_sleeps(monkeypatch)
+    handler = DLRHandler(uow_factory, rest_window=window)
     await handler.start()
     recorder.statuses = statuses
     sent(store, ['s1'], callback_url=rest_url(recorder))
     await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
     await settle(handler)
     await handler.stop()
-    assert len(recorder.requests) == made
-    assert waits == [2, 4, 8, 16, 32, 64, 128][: made - 1]
+    assert len(recorder.requests) == len(waits_made) + 1
+    assert waits == waits_made
     assert store.dlr_callbacks == {}
 
 

@@ -25,6 +25,7 @@ class HTTPConfig:
     port: int = 8080
     # name (a label for logs) -> its REST caller; none: /api/v1 is open
     users: dict[str, HTTPUser] = dataclasses.field(default_factory=dict)
+    callback_retry_minutes: int = 5  # how long a REST status callback is retried
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -114,7 +115,8 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     """
     Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
     An unknown key, a wrong type, a missing required key, an unknown log_level or
-    log_format, or a store window below 1 raises ValueError naming the key.
+    log_format, or a store window or http.callback_retry_minutes below 1 raises
+    ValueError naming the key.
     """
     data = monobase.config.read_config(os.fspath(path))
     if not isinstance(data.get('porth'), dict):
@@ -127,6 +129,10 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     for f in dataclasses.fields(StoreConfig):
         if getattr(settings.store, f.name) < 1:
             raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')
+    if settings.http.callback_retry_minutes < 1:
+        raise ValueError(
+            'invalid porth.http.callback_retry_minutes: must be at least 1'
+        )
     for name, smsc in settings.smsc.items():
         if smsc.tls_ca_file is not None and not smsc.tls:
             raise ValueError(
