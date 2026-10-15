@@ -318,7 +318,7 @@ def _messages(
         # 8-bit content, as hex: PostgreSQL text holds no NUL
         protocol_data['data'] = content.hex()
 
-    # Each recipient routed once (smsc: an override, not Kannel's hint); one
+    # Each recipient routed once (smsc: an override, though a fallback may move it); one
     # nothing routes is dropped, as Kannel does
     smsc = params.get('smsc') or None
     routes = {}

@@ -74,8 +74,8 @@ UCS-2 | Different
 | `validity` | Yes | Yes | Same
 | `dlr-mask`, `dlr-url` (and `dlrmask`, `dlrurl`) | Yes | Yes. A mask {product} can never
 answer is refused (see <<Delivery reports>>) | Different
-| `smsc` | A hint the routing lists can overrule | Always wins. An unknown name is `403 Not
-routable` | Different
+| `smsc` | A hint the routing lists can overrule | Always wins, unless it moves to that SMSC's
+`fallback`. An unknown name is `403 Not routable` | Different
 | `deferred`, `priority` | Honoured | Refused with `400` | Not supported
 | Long text | Split by `max-messages` and `concatenation` | Always concatenated, up to 255
 parts | Different
@@ -153,9 +153,9 @@ lists | One prefix table, longest match wins, plus `routing.default` (see <<Rout
 Different
 | `unified-prefix` number rewriting | Yes | No | Not supported
 | Several binds to one SMSC, load-balanced | Yes | One bind per SMSC | Not supported
-| Fail over to another SMSC | Through routing lists | No: a message keeps the SMSC it was
-routed to at submit (see <<Routing>>) |
-Not supported
+| Fail over to another SMSC | Through routing lists | `fallback` per SMSC: after
+`fallback_after` s unbound, messages move to it while it is bound (see <<Routing>>) |
+Different
 | `throughput` per SMSC | Yes | Yes, in `submit_sm` PDUs per second | Same
 | Reconnect after a dropped bind | `reconnect-delay`, 10 s by default | Every 10 s, not
 configurable | Different

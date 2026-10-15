@@ -62,6 +62,8 @@ class DeliveryEngine:
         self.settings = settings
         self.smsc = smsc
         self.smpp_client = smpp_client
+        # The engine messages move to while this SMSC stays unbound (Gateway wires it)
+        self.fallback: tp.Optional['DeliveryEngine'] = None
         self.workers: list[asyncio.Task] = []
         self.running = False
         self.log = logging.LoggerAdapter(logger, {'smsc': smsc}, merge_extra=True)
@@ -142,6 +144,10 @@ class DeliveryEngine:
             await self._finalize(message)
             return
 
+        if self._fails_over(message):
+            await self._move(message)
+            return
+
         try:
             self.log.info(
                 f'Processing message {message.message_id}',
@@ -213,6 +219,31 @@ class DeliveryEngine:
                 await asyncio.sleep(wait)
         self.log.info(
             f'Message {message.message_id} sent through SMSC {self.smsc}',
+            extra={'message_id': message.message_id},
+        )
+
+    def _fails_over(self, message: SMSMessage) -> bool:
+        """True when this SMSC has been unbound for fallback_after and the fallback is
+        bound with room for message (design.md §4.2)."""
+        fallback = self.fallback
+        if fallback is None:
+            return False
+        after = self.settings.smsc[self.smsc].fallback_after
+        return (
+            self.smpp_client.unbound_for() >= after
+            and fallback.smpp_client.connected
+            and not fallback.message_queue.full(message.priority)
+        )
+
+    async def _move(self, message: SMSMessage) -> None:
+        """Hand message to the fallback's queue; the move is not an attempt."""
+        assert self.fallback is not None
+        message.smsc = self.fallback.smsc
+        await self._save(message)
+        await self.fallback.message_queue.put(message)
+        self.log.warning(
+            f'Message {message.message_id}: SMSC {self.smsc} unbound for '
+            f'{self.smpp_client.unbound_for():.0f}s, moved to SMSC {message.smsc}',
             extra={'message_id': message.message_id},
         )
 

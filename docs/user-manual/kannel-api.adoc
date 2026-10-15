@@ -40,8 +40,8 @@ accepted by the SMSC, or their sum. Without it, no callback is made. `dlrmask` i
 its place.
 | `smsc` | no | The SMSC to send through, by its `[porth.smsc.<name>]` name, in place of the
 routing rules. Empty is the same as absent. Unlike Kannel, where it is a hint the routing
-rules can override, it always wins, and an SMSC that is not configured is an error. See
-<<Routing>>.
+rules can override, it always wins, unless it moves to that SMSC's `fallback`, and an SMSC
+that is not configured is an error. See <<Routing>>.
 | `username`, `password` | yes, once users are configured | The caller's credentials, checked
 against `[porth.kannel.users]`. `user` and `pass` are accepted in their place, as in Kannel.
 See <<Authentication>>.
@@ -302,7 +302,7 @@ http://app.example/mo?from=%p&to=%P&text=%a&charset=%C
 is stripped, and `mo.reply` is on (the default), the stripped body is sent back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
 any other message, with no delivery report. A reply that cannot be stored, or whose SMSC
 holds `delivery.queue_limit` messages, is not sent and is logged. It goes out through the SMSC the MO arrived on,
-whatever the routing rules say. Kannel instead routes a reply like any other message. A reply longer than one SMS is sent whole as a
+whatever the routing rules say, unless it moves to that SMSC's `fallback` (see <<Routing>>). Kannel instead routes a reply like any other message. A reply longer than one SMS is sent whole as a
 concatenated SMS, where Kannel's default `max-messages = 1` sends only one.
 
 Any other answer sends nothing and is logged: another status, another content type, or an

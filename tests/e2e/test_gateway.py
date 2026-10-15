@@ -181,6 +181,14 @@ def two_smscs(**kwargs) -> Settings:
     )
 
 
+def test_fallback_is_wired_to_the_named_engine(uow_factory):
+    settings = two_smscs()
+    settings.smsc['a'].fallback = 'b'
+    gateway = Gateway(settings, uow_factory)
+    assert gateway.engines['a'].fallback is gateway.engines['b']
+    assert gateway.engines['b'].fallback is None
+
+
 def quiet(gateway, monkeypatch):
     """No workers and no binds: what start() queues stays on the queues to be read."""
     for engine in gateway.engines.values():

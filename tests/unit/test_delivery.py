@@ -8,7 +8,7 @@ import pytest
 from smpp import CommandStatus
 from smpp.exceptions import SMPPBindException, SMPPMessageException
 
-from porth.config.settings import DeliveryConfig, Settings
+from porth.config.settings import DeliveryConfig, Settings, SMPPClientConfig
 from porth.service_layer import delivery as delivery_module
 from porth.service_layer.delivery import DeliveryEngine, retry_delay
 from porth.service_layer.dlr import DLRHandler
@@ -348,3 +348,89 @@ async def test_throttled_send_counts_a_retry_and_its_smpp_error():
         sample('porth_smpp_errors_total', smsc='a', command_status='ESME_RTHROTTLED')
         == errors + 1
     )
+
+
+class FakeClient(FakeHandler):
+    """A handler with a bind state: unbound for `unbound` seconds, 0 is bound."""
+
+    def __init__(self, unbound: float = 0):
+        super().__init__()
+        self.unbound = unbound
+        self.sends = 0
+
+    @property
+    def connected(self):
+        return self.unbound == 0
+
+    def unbound_for(self):
+        return self.unbound
+
+    async def send_message(self, message):
+        self.sends += 1
+        return await super().send_message(message)
+
+
+def with_fallback(home_unbound, fallback_unbound=0, queue_limit=None):
+    """Engine 'a' (fallback_after 10) whose fallback is engine 'b', sharing a store."""
+    settings = Settings(
+        smsc={
+            name: SMPPClientConfig(host='h', system_id='s', password='p')
+            for name in 'ab'
+        }
+    )
+    settings.smsc['a'].fallback = 'b'
+    engine, message = make(FakeClient(home_unbound), settings=settings)
+    fallback = Engine(
+        'b',
+        FakeClient(fallback_unbound),
+        MessageQueue(limit=queue_limit),
+        engine.uow_factory,
+        settings,
+        engine.dlr_handler,
+    )
+    engine.fallback = fallback
+    return engine, fallback, message
+
+
+@pytest.mark.asyncio
+async def test_unbound_past_fallback_after_moves_to_bound_fallback(caplog):
+    engine, fallback, message = with_fallback(home_unbound=10)
+    message.retry_count = 1
+    await engine._process_message(message)
+    assert engine.smpp_client.sends == 0 and fallback.smpp_client.sends == 0
+    assert fallback.message_queue.qsize() == 1
+    assert (await fallback.message_queue.get()) is message
+    stored = engine.stored(message)
+    assert (stored.smsc, stored.status, stored.retry_count) == (
+        'b',
+        MessageStatus.QUEUED,
+        1,
+    )
+    assert 'SMSC a unbound for 10s, moved to SMSC b' in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'home_unbound, fallback_unbound, queue_limit',
+    [
+        (9.9, 0, None),  # home not unbound long enough
+        (10, 5, None),  # fallback unbound too
+        (0, 0, None),  # home bound
+        (10, 0, 0),  # fallback's queue full
+    ],
+)
+async def test_message_stays_home(home_unbound, fallback_unbound, queue_limit):
+    engine, fallback, message = with_fallback(
+        home_unbound, fallback_unbound, queue_limit
+    )
+    await engine._process_message(message)
+    assert engine.smpp_client.sends == 1
+    assert fallback.message_queue.qsize() == 0
+    assert engine.stored(message).smsc == 'a'
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_sends_at_home():
+    engine, message = make(FakeClient(unbound=100))
+    await engine._process_message(message)
+    assert engine.smpp_client.sends == 1

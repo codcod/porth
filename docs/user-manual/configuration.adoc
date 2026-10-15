@@ -38,6 +38,9 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
   (`invalid porth.smsc.op-a.tls_ca_file: set tls = true to use it`), or can't be read as PEM
   CA certificates (`invalid porth.smsc.op-a.tls_ca_file: [Errno 2] No such file or
   directory`); `make config-check` catches both;
+* an SMSC's `fallback` names no configured SMSC
+  (`invalid porth.smsc.op-a.fallback: no SMSC named 'op-c'`) or itself
+  (`invalid porth.smsc.op-a.fallback: names itself`), or its `fallback_after` is below 1;
 * the file has no `[porth]` table.
 
 `make config-check` (`bin/porth --check <file>`) runs the same checks on
@@ -140,6 +143,16 @@ Kannel's `use-ssl`.
 | `tls_ca_file` | unset | A PEM file of CA certificates used in place of the system CAs, for
 an SMSC with a private CA or a self-signed certificate (put that certificate here). A
 relative path is read from {product}'s working directory. Needs `tls = true`.
+| `fallback` | unset | Another SMSC that takes this one's messages while this one is
+unbound. A message moves only while the fallback's bind that sends (its transmitter bind,
+with `transceiver = false`) is up and its queue is under its `delivery.queue_limit`; moved
+messages count against the fallback's limit. A move goes only to this SMSC's own fallback,
+never past it in one step. A moved message goes out over the fallback's own bind and
+settings, `tls` included. See <<Routing>>.
+| `fallback_after` | `10` | Seconds this SMSC must have been unbound before its messages move
+to `fallback`. Keep it shorter than a message's retry window (`delivery.retry_delay`, with
+its backoff, over `delivery.max_retries`), or a message can use up its attempts before it
+moves. At least `1`.
 |===
 
 == Kannel users
