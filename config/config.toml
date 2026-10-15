@@ -57,6 +57,10 @@ reply = true
 # For an SMSC without transceiver binds: a transmitter and a separate receiver bind.
 # transceiver = false
 # receive_port = 2776  # the receiver's port; unset = port
+# TLS on both binds; the SMSC's certificate and host name are always verified, against
+# the system CAs or, for a private CA or a self-signed certificate, tls_ca_file.
+# tls = true
+# tls_ca_file = "/etc/porth/smsc-ca.pem"
 
 # Which SMSC a number goes out through: the longest matching prefix (digits, matched
 # without a leading +), else default.

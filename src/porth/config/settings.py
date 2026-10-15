@@ -56,6 +56,9 @@ class SMPPClientConfig:
     # takes receipts and MO, as Kannel's transceiver-mode = false and receive-port
     transceiver: bool = True
     receive_port: tp.Optional[int] = None
+    # true: both binds over TLS, the SMSC's certificate and host name always verified
+    tls: bool = False
+    tls_ca_file: tp.Optional[str] = None  # PEM CAs in place of the system ones
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -124,6 +127,11 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     for f in dataclasses.fields(StoreConfig):
         if getattr(settings.store, f.name) < 1:
             raise ValueError(f'invalid porth.store.{f.name}: must be at least 1')
+    for name, smsc in settings.smsc.items():
+        if smsc.tls_ca_file is not None and not smsc.tls:
+            raise ValueError(
+                f'invalid porth.smsc.{name}.tls_ca_file: set tls = true to use it'
+            )
     tokens: dict[str, str] = {}
     for name, http_user in settings.http.users.items():
         key = f'porth.http.users.{name}.token'

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import ssl
 from datetime import datetime
 
 import pytest
@@ -209,6 +210,40 @@ async def test_connect_binds_as_bind_on_port(monkeypatch, kwargs, bind, port, la
     assert calls == [(port, bind)]
     assert (client.name, client.label) == ('s', label)  # name: the metric label
     await client.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tls', [False, True])
+async def test_connect_passes_tls_context(monkeypatch, tls):
+    calls = []
+
+    @contextlib.asynccontextmanager
+    async def connect(host, port, system_id, password, *, bind, ssl, **kw):
+        calls.append(ssl)
+        yield FakeInbound()
+
+    monkeypatch.setattr(client_module.smpp, 'connect', connect)
+    config = SMPPClientConfig(host='h', system_id='s', password='p', tls=tls)
+    client = SMPPClient('s', config)
+    await client.connect()
+    await client.disconnect()
+    if not tls:
+        assert calls == [None]
+    else:
+        (ctx,) = calls
+        assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+def test_missing_tls_ca_file_raises_at_construction(tmp_path):
+    config = SMPPClientConfig(
+        host='h',
+        system_id='s',
+        password='p',
+        tls=True,
+        tls_ca_file=str(tmp_path / 'nope.pem'),
+    )
+    with pytest.raises(ValueError, match='invalid porth.smsc.s.tls_ca_file: '):
+        SMPPClient('s', config)
 
 
 class FakeInbound:

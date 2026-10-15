@@ -32,6 +32,10 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
 * `log_format` is neither `text` nor `json` (`invalid porth.log_format: 'xml'`);
+* an SMSC's `tls_ca_file` is set without `tls = true`
+  (`invalid porth.smsc.op-a.tls_ca_file: set tls = true to use it`), or can't be read as PEM
+  CA certificates (`invalid porth.smsc.op-a.tls_ca_file: [Errno 2] No such file or
+  directory`); `make config-check` catches both;
 * the file has no `[porth]` table.
 
 `make config-check` (`bin/porth --check <file>`) runs the same checks on
@@ -114,6 +118,13 @@ transmitter bind for `submit_sm` and a separate receiver bind for receipts and M
 same `system_id`, `password` and `system_type`. Kannel's `transceiver-mode`.
 | `receive_port` | `port` | The receiver bind's port, read only with `transceiver = false`.
 Kannel's `receive-port`.
+| `tls` | `false` | `true`: bind over TLS, both binds with `transceiver = false`. The SMSC's
+certificate and host name are always verified, against the system CAs or `tls_ca_file`;
+nothing turns verification off, so the bind password never goes to an unverified peer.
+Kannel's `use-ssl`.
+| `tls_ca_file` | unset | A PEM file of CA certificates used in place of the system CAs, for
+an SMSC with a private CA or a self-signed certificate (put that certificate here). A
+relative path is read from {product}'s working directory. Needs `tls = true`.
 |===
 
 == Kannel users

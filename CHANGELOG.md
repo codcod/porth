@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- TLS to an SMSC: `tls = true` in a `[porth.smsc.<name>]` table binds over TLS (both binds
+  with `transceiver = false`), always verifying the SMSC's certificate and host name, against
+  the system CAs or a `tls_ca_file` for a private CA or a self-signed certificate. Kannel's
+  `use-ssl`, without a client certificate. `bin/porth --check` (and so `make config-check`)
+  catches an unreadable CA file. smppai is locked at 0.12.1 (POR-039).
 - User manual: *TLS in front of porth* (a Caddy recipe for both listeners, and why
   `allow_ip` filters nothing behind a proxy); the routing prefix table as a destination
   allowlist; a secret token in `callback_url` or `dlr-url` to authenticate callbacks

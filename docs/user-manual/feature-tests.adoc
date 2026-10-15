@@ -97,5 +97,5 @@ They take about 15 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, 
   at a crash, are known limitations, not features. See <<Limitations>>.
 * **Real operators.** The test SMSCs follow SMPP 3.4 as smppai implements it. An operator's
   SMSC may differ, for example in the format of its receipt ids (see <<Delivery receipts>>).
-* **Features {product} does not have,** such as TLS and failover between SMSCs. See
-  <<porth and Kannel>> and <<Limitations>>.
+* **Features {product} does not have,** such as TLS on its listeners and failover between
+  SMSCs. See <<porth and Kannel>> and <<Limitations>>.
