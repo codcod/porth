@@ -184,7 +184,7 @@ async def send_through_restarts(
         message_id = await sendsms(kannel_port, smsc.text, target.url())
         ids.append(message_id)
         # its first attempt fails (no SMSC), and the retry waits 60 s
-        await until(lambda: first.engines[first_name]._retries)
+        await until(lambda: first.queues[first_name].retrying())
     finally:
         await first.stop()
     assert await status(engine, message_id) == 'queued'

@@ -182,6 +182,39 @@ async def test_failed_commit_queues_none_of_several_recipients(kannel, uow_facto
     assert uow_factory.repo.messages == {}
 
 
+@pytest.mark.asyncio
+async def test_full_queue_is_503_and_refuses_every_recipient(kannel, uow_factory):
+    client, queue = kannel
+    queue._limit = 1
+    assert (await client.get('/cgi-bin/sendsms', params=PARAMS)).status == 202
+    # b has room, a does not: all or none, as the store
+    resp = await client.get(
+        '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000010 447700900000'}
+    )
+    assert resp.status == 503
+    assert await resp.text() == 'Temporal failure, try again later.'
+    assert 'Retry-After' not in resp.headers
+    assert len(uow_factory.repo.messages) == 1
+    assert client.app['queues']['b'].empty()
+
+
+@pytest.mark.asyncio
+async def test_recipients_past_the_limit_refuse_the_request(kannel, uow_factory):
+    client, queue = kannel
+    queue._limit = 2
+    # three recipients on a, none queued yet: the request's own messages count
+    resp = await client.get(
+        '/cgi-bin/sendsms',
+        params={**PARAMS, 'to': '306900000010 306900000011 306900000012'},
+    )
+    assert resp.status == 503
+    assert uow_factory.repo.messages == {} and queue.empty()
+    resp = await client.get(
+        '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000010 306900000011'}
+    )
+    assert resp.status == 202 and queue.qsize() == 2
+
+
 NOT_ROUTABLE = 'Not routable. Do not try again.'
 
 

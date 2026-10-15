@@ -81,6 +81,13 @@ every wait at `delivery.retry_delay`.
 | `delivery.max_retry_delay` | `300` | Longest wait before a retry, in seconds.
 | `delivery.worker_count` | `10` | Concurrent delivery workers, for each SMSC: two SMSCs
 have ten each.
+| `delivery.queue_limit` | unset | Messages held in memory for each SMSC, waiting plus
+retrying (not those a worker is sending). At it, a submit routed to that SMSC is refused:
+`503` with `Retry-After: 10` on the HTTP API, `503 Temporal failure, try again later.` on
+the Kannel API. A `high` message is refused only at twice it. A Kannel request counts all
+its recipients for each SMSC, and is refused whole if they would not fit, so one with more
+recipients for an SMSC than the limit is never accepted. A soft limit:
+submits arriving together can overshoot it a little. At least `1`. Unset: unlimited.
 | `mo.url` | unset | The application URL each MO is fetched from, with Kannel escape codes.
 Unset: MO is logged and dropped. See <<Mobile-originated messages>>.
 | `mo.reply` | `true` | Send the application's `text/plain` answer back as an SMS.

@@ -1,12 +1,13 @@
 """The services the entrypoints and handlers share: accept messages, and recover the
 unsent ones after a restart."""
 
+import collections
 import logging
 import typing as tp
 from datetime import datetime, timezone
 
 from porth.adapters.queue import MessageQueue
-from porth.domain.exceptions import NoRoute
+from porth.domain.exceptions import NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
 from porth.service_layer.dlr import DLRHandler
 from porth.service_layer.routing import Router
@@ -22,8 +23,18 @@ async def submit(
 ) -> None:
     """Store routed messages in one unit of work (all or none), then queue each on its
     SMSC's queue: durable before accepted (design.md §4.6), so a restart still sends
-    them. Store errors propagate, and nothing is queued."""
+    them. Store errors propagate, and nothing is queued. Refused whole with QueueError,
+    before anything is stored, when the messages would take an SMSC's queue past its
+    limit for their priority."""
     messages = list(messages)
+    # The request's own messages count: one Kannel request can carry many recipients.
+    # ponytail: soft limit, the check and the put are not atomic across requests, so
+    # the backlog can overshoot by the submits in flight; put never blocks
+    adding = collections.Counter(m.smsc for m in messages)
+    for message in messages:
+        assert message.smsc is not None
+        if queues[message.smsc].full(message.priority, adding[message.smsc]):
+            raise QueueError(f'SMSC {message.smsc!r} queue would exceed its limit')
     async with uow_factory() as uow:
         for message in messages:
             await uow.messages.add(message)

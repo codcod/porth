@@ -265,6 +265,17 @@ def test_callback_retry_minutes_below_one_raises(tmp_path):
         load(tmp_path, '[porth.http]\ncallback_retry_minutes = 0\n')
 
 
+def test_queue_limit_unset_by_default_and_below_one_raises(tmp_path):
+    assert load(tmp_path, '[porth]\n').delivery.queue_limit is None
+    assert (
+        load(tmp_path, '[porth.delivery]\nqueue_limit = 5\n').delivery.queue_limit == 5
+    )
+    with pytest.raises(
+        ValueError, match='invalid porth.delivery.queue_limit: must be at least 1'
+    ):
+        load(tmp_path, '[porth.delivery]\nqueue_limit = 0\n')
+
+
 def test_shipped_config_loads():
     root = Path(__file__).resolve().parents[2]
     settings = load_settings(root / 'config' / 'config.toml')

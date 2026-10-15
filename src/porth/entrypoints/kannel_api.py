@@ -18,7 +18,7 @@ from porth import metrics
 from porth.config.settings import KannelUser
 from porth.entrypoints import ip_allowed
 from porth.adapters.smpp import choose_data_coding, sms_payload
-from porth.domain.exceptions import MessageError, NoRoute
+from porth.domain.exceptions import MessageError, NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
 from porth.adapters.queue import MessageQueue
 from porth.service_layer.routing import Router
@@ -238,6 +238,12 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
         await services.submit(
             request.app['uow_factory'], request.app['queues'], messages
         )
+    except QueueError as e:
+        # All or none, as the store: one full SMSC refuses every recipient
+        logger.warning(f'Kannel API: message refused: {e}')
+        return _answer(
+            503, 'Temporal failure, try again later.'
+        )  # smsbox's, queue full
     except (SQLAlchemyError, OSError) as e:  # OSError: database unreachable
         logger.error(f'Kannel API: message not stored, so not accepted: {e!r}')
         return _answer(503, 'Temporal failure, try again later.')

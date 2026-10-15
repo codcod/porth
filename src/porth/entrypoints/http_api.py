@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from porth import metrics
 from porth.config.settings import HTTPUser, Settings
-from porth.domain.exceptions import NoRoute
+from porth.domain.exceptions import NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
 from porth.entrypoints import ip_allowed
 from porth.adapters.queue import MessageQueue
@@ -24,6 +24,9 @@ from porth.service_layer import services
 from porth.service_layer.unit_of_work import AbstractUnitOfWork
 
 logger = logging.getLogger(__name__)
+
+# ponytail: fixed; derive it from backlog / throughput if a client needs a better hint
+_RETRY_AFTER = 10  # seconds, on a queue-full 503
 
 
 def create_http_app(
@@ -225,6 +228,14 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
             return _repeat(first)
     except NoRoute as e:
         return _rejected(e)
+    except QueueError as e:
+        logger.warning(f'HTTP API: message refused: {e}', extra={'smsc': message.smsc})
+        # Retry-After tells this 503 from the store's, which has none
+        return web.json_response(
+            {'error': 'Failed to send SMS', 'details': 'queue full, try again later'},
+            status=503,
+            headers={'Retry-After': str(_RETRY_AFTER)},
+        )
     except (SQLAlchemyError, OSError) as e:  # OSError: database unreachable
         logger.error(f'HTTP API: message not stored, so not accepted: {e!r}')
         return web.json_response(

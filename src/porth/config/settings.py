@@ -77,6 +77,9 @@ class DeliveryConfig:
     backoff_factor: int = 2  # 1: fixed retry_delay
     max_retry_delay: int = 300  # seconds
     worker_count: int = 10  # per SMSC
+    # Messages held in memory per SMSC (waiting plus retrying); at it a normal submit
+    # is refused with 503, a high-priority one at twice it. Unset: unlimited
+    queue_limit: tp.Optional[int] = None
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -115,8 +118,8 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     """
     Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
     An unknown key, a wrong type, a missing required key, an unknown log_level or
-    log_format, or a store window or http.callback_retry_minutes below 1 raises
-    ValueError naming the key.
+    log_format, or a store window, http.callback_retry_minutes or delivery.queue_limit
+    below 1 raises ValueError naming the key.
     """
     data = monobase.config.read_config(os.fspath(path))
     if not isinstance(data.get('porth'), dict):
@@ -133,6 +136,8 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
         raise ValueError(
             'invalid porth.http.callback_retry_minutes: must be at least 1'
         )
+    if settings.delivery.queue_limit is not None and settings.delivery.queue_limit < 1:
+        raise ValueError('invalid porth.delivery.queue_limit: must be at least 1')
     for name, smsc in settings.smsc.items():
         if smsc.tls_ca_file is not None and not smsc.tls:
             raise ValueError(
