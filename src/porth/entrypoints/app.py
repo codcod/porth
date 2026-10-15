@@ -112,6 +112,9 @@ class Gateway:
             metrics.bound.labels(name).set_function(
                 functools.partial(self._bound, name)
             )
+        for name, config in settings.smsc.items():
+            if config.fallback:
+                self.engines[name].fallback = self.engines[config.fallback]
 
     def _bound(self, name: str) -> bool:
         """The SMSC is bound once all its binds are."""

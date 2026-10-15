@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- Failover between SMSCs: `fallback = "<name>"` in a `[porth.smsc.<name>]` table, with
+  `fallback_after` (default 10 s). When a worker takes a message whose SMSC has been unbound
+  that long, the message moves to the fallback's queue, provided the fallback is bound and
+  under its `delivery.queue_limit`. A move is not an attempt, goes only to the SMSC's own
+  fallback and is logged; the
+  message's `smsc`, receipts and `%i` become the fallback's. `bin/porth --check` catches a
+  `fallback` naming no other SMSC (POR-041).
 - `delivery.queue_limit` caps the messages held in memory for each SMSC, waiting plus
   retrying. At it, a submit routed to that SMSC is refused before anything is stored: `503`
   with `Retry-After: 10` on the HTTP API (the store-unavailable `503` has no header), `503

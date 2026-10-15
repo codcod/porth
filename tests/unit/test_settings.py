@@ -181,6 +181,26 @@ def test_tls_loads_with_or_without_ca_file(tmp_path, ca):
     assert load(tmp_path, SMSC).smsc['a'].tls is False
 
 
+@pytest.mark.parametrize(
+    'extra, error',
+    [
+        ('fallback = "x"\n', "porth.smsc.a.fallback: no SMSC named 'x'"),
+        ('fallback = "a"\n', 'porth.smsc.a.fallback: names itself'),
+        ('fallback_after = 0\n', 'porth.smsc.a.fallback_after: must be at least 1'),
+    ],
+)
+def test_bad_fallback_raises_naming_the_key(tmp_path, extra, error):
+    with pytest.raises(ValueError, match=re.escape(f'invalid {error}')):
+        load(tmp_path, SMSC + extra)
+
+
+def test_fallback_pair_loads(tmp_path):
+    text = SMSC + 'fallback = "b"\n' + SMSC.replace('.a]', '.b]') + 'fallback = "a"\n'
+    smsc = load(tmp_path, text + 'fallback_after = 3\n').smsc
+    assert (smsc['a'].fallback, smsc['a'].fallback_after) == ('b', 10)
+    assert (smsc['b'].fallback, smsc['b'].fallback_after) == ('a', 3)
+
+
 def test_kannel_users_load(tmp_path):
     text = (
         '[porth.kannel.users.u]\npassword = "p"\nallow_ip = ["10.0.0.0/8", "::1"]\n'

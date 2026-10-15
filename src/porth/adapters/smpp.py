@@ -5,6 +5,7 @@ import collections
 import contextlib
 import logging
 import ssl
+import time
 import typing as tp
 
 import smpp
@@ -128,11 +129,22 @@ class SMPPClient:
         self._inbound: tp.Optional[asyncio.Task] = None  # the bind's inbound consumer
         self._keeper: tp.Optional[asyncio.Task] = None  # the rebind loop
         self._connect_lock = asyncio.Lock()
+        # time.monotonic() when the bind went down; None while bound, and before the
+        # first connect(), so a slow startup never counts as unbound.
+        # ponytail: set by _drop(), so a bind smppai lost silently counts from the
+        # next connect(), at most one rebind delay late
+        self.unbound_since: tp.Optional[float] = None
 
     @property
     def connected(self) -> bool:
         """True while the smppai client is bound (smppai clears it on unbind or lost connection)."""
         return self.client is not None and self.client.is_bound
+
+    def unbound_for(self) -> float:
+        """Seconds this client has been unbound; 0 while bound."""
+        if self.connected or self.unbound_since is None:
+            return 0.0
+        return time.monotonic() - self.unbound_since
 
     async def connect(self) -> SmppaiClient:
         """Bind afresh unless already bound; return the bound client. Raises on failure."""
@@ -166,6 +178,7 @@ class SMPPClient:
 
             self._bind = stack
             self.client = inbound.raw
+            self.unbound_since = None
             self._inbound = asyncio.create_task(self._consume(inbound))
             self.log.info(
                 f'SMSC {self.label}: SMPP client connected to '
@@ -317,6 +330,8 @@ class SMPPClient:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
         stack, consumer = self._bind, self._inbound
         self._bind = self.client = None
+        if self.unbound_since is None:
+            self.unbound_since = time.monotonic()
         if stack is not None:
             try:
                 await stack.aclose()

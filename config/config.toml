@@ -62,6 +62,9 @@ reply = true
 # the system CAs or, for a private CA or a self-signed certificate, tls_ca_file.
 # tls = true
 # tls_ca_file = "/etc/porth/smsc-ca.pem"
+# Another SMSC that takes this one's messages once it has been unbound fallback_after s.
+# fallback = "other"
+# fallback_after = 10
 
 # Which SMSC a number goes out through: the longest matching prefix (digits, matched
 # without a leading +), else default.

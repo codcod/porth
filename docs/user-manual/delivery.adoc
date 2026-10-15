@@ -42,20 +42,31 @@ deleted. Polling a deleted message answers `404`.
 
 == Routing
 
-Each message is routed once, when it is submitted, and keeps its SMSC through every retry
-and restart. <<Routing rules>> gives the rules.
+Each message is routed when it is submitted, and keeps its SMSC through every retry and
+restart unless it moves to that SMSC's `fallback`. <<Routing rules>> gives the rules.
 
 * A number that nothing routes is refused at submit, and nothing is stored. The Kannel API
   drops it from a request with several numbers, and answers `403` only when none routes. The
   HTTP API answers `400`.
 * A message is not routed again when its SMSC is slow or down: it waits for that SMSC, and
-  retries there.
+  retries there. The exception is an SMSC with a `fallback` (see <<SMSCs>>). When a worker
+  takes a message, a new one or a retry, and its SMSC has been unbound for `fallback_after`
+  seconds or longer, the message moves to the fallback's queue. It moves only while the
+  fallback's bind that sends is up and its queue is under `delivery.queue_limit`; otherwise it retries at
+  home. A move is not an attempt, and the message keeps the attempts it already used:
+  `delivery.max_retries` counts across both SMSCs. A moved message does not go back when its
+  first SMSC recovers. It moves again only by its new SMSC's own `fallback`, and only to a
+  bound one, so two SMSCs that name each other never pass a message back and forth. A move is
+  logged as a warning naming both SMSCs. The message's `smsc`, its receipts, and `%i` in a
+  Kannel `dlr-url` are then the fallback's. This holds for a Kannel message sent with
+  `smsc=`, which Kannel also treats as a hint, and for an MO reply. A message that was partly
+  sent moves like a retry: the whole message goes out again.
 * At startup, an unsent message whose SMSC is no longer configured is routed again by the
   current rules, or ends `failed` if nothing routes it.
 * Each SMSC has its own queue, its own `delivery.worker_count` workers and its own bind. A
   slow or unreachable SMSC holds up only its own messages.
 * A reply to a mobile-originated message goes out through the SMSC the MO arrived on, not
-  through the routing rules.
+  through the routing rules, unless it moves to that SMSC's fallback.
 
 == Throughput cap
 
@@ -114,6 +125,9 @@ bind on its own. While the receiver bind is down, sends go on and the SMSC holds
 receipts and MO until it is back. While the transmitter bind is down, sends are retried.
 
 * If the bind fails at startup, the gateway still starts and retries the bind every 10 s.
+* With a `fallback`, messages move once the bind has been down `fallback_after` seconds (see
+  <<Routing>>). A bind lost without notice is counted from the next rebind attempt, up to
+  10 s late.
 * A bind that is lost, or that the SMSC unbinds, is reopened within 10 s, even when nothing
   is being sent.
 * When a send fails at the transport level (timeout, lost connection, not bound), {product}

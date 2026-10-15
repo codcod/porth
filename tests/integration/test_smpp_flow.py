@@ -15,6 +15,7 @@ from aiohttp.test_utils import TestServer
 from smpp import NpiType, SMPPServer, TonType
 
 from porth.config.settings import (
+    DeliveryConfig,
     HTTPConfig,
     KannelConfig,
     MOConfig,
@@ -406,6 +407,65 @@ async def test_each_number_goes_out_through_its_prefixs_smsc(uow_factory):
         for server in servers:
             await server.stop()
     assert received == {'a': ['306900000001'], 'b': ['447000000001']}
+
+
+@pytest.mark.asyncio
+async def test_message_for_a_down_smsc_goes_out_through_its_fallback(uow_factory):
+    """a never binds (closed port); after fallback_after its message moves to b,
+    which sends it, and b's receipt marks it delivered."""
+    received: list[str] = []
+    server = SMPPServer(host='127.0.0.1', port=free_port(), setup_signal_handlers=False)
+    server.on_message_received = lambda server, session, pdu: (
+        received.append(pdu.destination_addr) or 'smsc-1'
+    )
+    config = {
+        name: SMPPClientConfig(
+            host='127.0.0.1', port=port, system_id='porth', password='pw'
+        )
+        for name, port in (('a', free_port()), ('b', server.port))
+    }
+    config['a'].fallback, config['a'].fallback_after = 'b', 1
+    kannel_port = free_port()
+    gateway = Gateway(
+        Settings(
+            http=HTTPConfig(host='127.0.0.1', port=0),
+            kannel=KannelConfig(host='127.0.0.1', port=kannel_port),
+            smsc=config,
+            routing=RoutingConfig(prefixes={'30': 'a'}),
+            delivery=DeliveryConfig(max_retries=5, retry_delay=1, backoff_factor=1),
+        ),
+        uow_factory,
+    )
+    store = uow_factory.repo
+    await server.start()
+    await gateway.start()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f'http://127.0.0.1:{kannel_port}/cgi-bin/sendsms',
+                params={'from': '1234', 'to': '306900000001', 'text': 'hi'},
+            ) as response:
+                assert response.status == 202
+        (message,) = store.messages.values()
+        async with asyncio.timeout(10):
+            while message.status != MessageStatus.SENT:
+                await asyncio.sleep(0.01)
+                message = store.messages[message.message_id]
+        assert (message.smsc, received) == ('b', ['306900000001'])
+        assert await server.deliver_sm(
+            'porth',
+            source_addr='306900000001',
+            destination_addr='1234',
+            short_message=RECEIPT,
+            esm_class=0x04,
+        )
+        async with asyncio.timeout(5):
+            while store.messages[message.message_id].status == MessageStatus.SENT:
+                await asyncio.sleep(0.01)
+    finally:
+        await gateway.stop()
+        await server.stop()
+    assert store.messages[message.message_id].status == MessageStatus.DELIVERED
 
 
 TLS_DIR = pathlib.Path(__file__).parents[1] / 'fixtures' / 'tls'

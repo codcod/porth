@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import ssl
+import types
 from datetime import datetime
 
 import pytest
@@ -617,3 +618,33 @@ def test_throughput_below_one_fails_and_unset_builds_no_pacer(smpp):
     with pytest.raises(ValueError, match='porth.smsc.s.throughput'):
         SMPPClient('s', config)
     assert smpp._pacer is None
+
+
+@pytest.mark.asyncio
+async def test_unbound_for_counts_from_the_drop_and_is_zero_while_bound(
+    smpp, monkeypatch
+):
+    now = [100.0]
+    clock = types.SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(client_module, 'time', clock)  # not asyncio's clock
+    now[0] = 105.0
+    assert smpp.unbound_for() == 0.0  # never tried to bind: a slow start is not down
+
+    FakeSmppai.fail_connect = True
+    with pytest.raises(ConnectionError):
+        await smpp.connect()  # the first attempt starts the count
+    now[0] = 107.0
+    with pytest.raises(ConnectionError):
+        await smpp.connect()
+    assert smpp.unbound_for() == 2.0  # a failed bind does not restart it
+
+    FakeSmppai.fail_connect = False
+    await smpp.connect()
+    assert smpp.unbound_for() == 0.0
+
+    now[0] = 110.0
+    FakeSmppai.submit_error = RuntimeError('boom')
+    with pytest.raises(RuntimeError):
+        await smpp.send_message(msg('hi'))
+    now[0] = 113.0
+    assert smpp.unbound_for() == 3.0  # counted from the drop
