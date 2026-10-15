@@ -132,7 +132,7 @@ async def test_failing_sent_write_is_logged_not_resent(caplog, monkeypatch):
     assert handler.sends == 1
     assert len(engine.uow_factory.uows) == 4  # the first write and three retries
     assert message.status == MessageStatus.SENT
-    assert message.retry_count == 0 and not engine._retries
+    assert message.retry_count == 0 and not engine.message_queue.retrying()
     assert engine.message_queue.empty()
     assert f'{message.message_id} sent as' in caplog.text
     # Rolled back: the row keeps its old status and no SMSC id is indexed
@@ -146,7 +146,7 @@ async def test_message_error_fails_without_retry():
     await engine._process_message(message)
     assert message.status == MessageStatus.FAILED
     assert message.retry_count == 0
-    assert not engine._retries
+    assert not engine.message_queue.retrying()
     assert engine.stored(message).status == MessageStatus.FAILED
 
 
@@ -176,7 +176,7 @@ async def test_retries_wait_independently():
     async with asyncio.timeout(1.8):  # one shared retry worker needed ~5 s
         while engine.message_queue.qsize() < 5:
             await asyncio.sleep(0.05)
-    assert not engine._retries
+    assert not engine.message_queue.retrying()
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_permanent_smsc_rejection_fails_without_retry():
     await engine._process_message(message)
     assert message.status == MessageStatus.FAILED
     assert message.retry_count == 0
-    assert not engine._retries
+    assert not engine.message_queue.retrying()
     assert engine.stored(message).status == MessageStatus.FAILED
 
 
@@ -209,7 +209,7 @@ async def test_transient_failure_is_retried(error):
     await engine._process_message(message)
     assert message.retry_count == 1
     assert message.status == MessageStatus.QUEUED
-    assert len(engine._retries) == 1
+    assert engine.message_queue.retrying() == 1
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_last_attempt_fails_without_retry():
     await engine._process_message(message)
     assert message.retry_count == 3
     assert message.status == MessageStatus.FAILED
-    assert not engine._retries
+    assert not engine.message_queue.retrying()
     stored = engine.stored(message)
     assert (stored.status, stored.retry_count) == (MessageStatus.FAILED, 3)
 
@@ -229,9 +229,9 @@ async def test_stop_cancels_pending_retry():
     engine, message = make(FakeHandler(OSError('reset')))
     engine.running = True  # stop() is a no-op on an engine that never started
     await engine._process_message(message)
-    (task,) = engine._retries
+    assert engine.message_queue.retrying() == 1
     await engine.stop()
-    assert task.cancelled()
+    assert engine.message_queue.retrying() == 0
     assert engine.message_queue.empty()
 
 

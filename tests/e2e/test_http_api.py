@@ -94,7 +94,43 @@ async def test_failed_commit_is_503_and_queues_nothing(http, uow_factory):
     resp = await client.post('/api/v1/sms/send', json=BODY)
     assert resp.status == 503
     assert (await resp.json())['error'] == 'Failed to send SMS'
+    assert 'Retry-After' not in resp.headers  # what tells it from a full queue's
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_full_queue_is_503_with_retry_after_and_stores_nothing(http):
+    client, queue, store = http
+    queue._limit = 1
+    await submit(client)
+    keyed = {**BODY, 'idempotency_key': 'k-1'}
+    resp = await client.post('/api/v1/sms/send', json=keyed)
+    assert resp.status == 503
+    assert resp.headers['Retry-After'] == '10'
+    assert await resp.json() == {
+        'error': 'Failed to send SMS',
+        'details': 'queue full, try again later',
+    }
+    assert len(store.messages) == 1 and queue.qsize() == 1
+    # only a's traffic is refused
+    other = {**BODY, 'destination_addr': '+447700900000'}
+    assert (await client.post('/api/v1/sms/send', json=other)).status == 200
+    # the refused key was not taken: once there is room, it is accepted
+    await queue.get()
+    resp = await client.post('/api/v1/sms/send', json=keyed)
+    assert resp.status == 200
+    assert store.messages[(await resp.json())['message_id']].idempotency_key == 'k-1'
+
+
+@pytest.mark.asyncio
+async def test_high_priority_is_refused_only_at_twice_the_limit(http):
+    client, queue, _ = http
+    queue._limit = 1
+    high = {**BODY, 'priority': 'high'}
+    await submit(client)
+    assert (await client.post('/api/v1/sms/send', json=BODY)).status == 503
+    assert (await client.post('/api/v1/sms/send', json=high)).status == 200
+    assert (await client.post('/api/v1/sms/send', json=high)).status == 503
 
 
 @pytest.mark.asyncio

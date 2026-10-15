@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- `delivery.queue_limit` caps the messages held in memory for each SMSC, waiting plus
+  retrying. At it, a submit routed to that SMSC is refused before anything is stored: `503`
+  with `Retry-After: 10` on the HTTP API (the store-unavailable `503` has no header), `503
+  Temporal failure, try again later.` on the Kannel API, a whole multi-recipient request if
+  its recipients would take an SMSC past the limit. A `high` message is refused only at twice the limit. Unset by
+  default: unlimited, as before (POR-040).
 - `http.callback_retry_minutes` sets how long a REST status callback is retried (default 5:
   today's 8 attempts over about 4 minutes). Waits double from 2 s up to 300 s, so a receiver
   down for an hour gets every final status with a window of 65. A restart starts the window

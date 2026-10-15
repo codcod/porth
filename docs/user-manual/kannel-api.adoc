@@ -137,8 +137,10 @@ that ends in 2100 or later.
 | `400` | `Priority field misformed, rejected` | Any `priority`.
 | `403` | `Not routable. Do not try again.` | Not one number routes, including when `smsc`
 names an SMSC that is not configured.
-| `503` | `Temporal failure, try again later.` | The message store is unavailable; nothing is
-queued.
+| `503` | `Temporal failure, try again later.` | The message store is unavailable, or the
+request's recipients would take an SMSC past `delivery.queue_limit` messages, waiting or
+waiting to retry; nothing is queued, for any recipient. A request with more recipients for one
+SMSC than the limit is never accepted, so split it.
 |===
 
 The checks run in this order, so a request gets the first answer that applies.
@@ -298,7 +300,8 @@ http://app.example/mo?from=%p&to=%P&text=%a&charset=%C
 {product} fetches the URL once with `GET`, with a 30 s timeout. If the application answers
 `200` or `202` with a `text/plain` body that is not empty once leading and trailing whitespace
 is stripped, and `mo.reply` is on (the default), the stripped body is sent back to the MO's sender as an SMS from the number the MO was sent to. The reply is queued like
-any other message, with no delivery report. It goes out through the SMSC the MO arrived on,
+any other message, with no delivery report. A reply that cannot be stored, or whose SMSC
+holds `delivery.queue_limit` messages, is not sent and is logged. It goes out through the SMSC the MO arrived on,
 whatever the routing rules say. Kannel instead routes a reply like any other message. A reply longer than one SMS is sent whole as a
 concatenated SMS, where Kannel's default `max-messages = 1` sends only one.
 

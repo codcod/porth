@@ -111,6 +111,18 @@ A queued message returns `200`:
 no SMSC takes (see <<Routing rules>>) returns `400` with `{"error": …, "details": …}`, and
 nothing is stored. The HTTP API has no way to name the SMSC.
 
+Two answers are `503`, and nothing is stored with either, so the submit is safe to repeat
+(with the same `idempotency_key`, if it had one):
+
+* The message store is unavailable: `{"error": "Failed to send SMS", "details": "message
+  store unavailable"}`, with no `Retry-After` header.
+* The SMSC the number routes to holds `delivery.queue_limit` messages, waiting or waiting to
+  retry (twice that for a `high` message; see <<Settings>>): `{"error": "Failed to send SMS",
+  "details": "queue full, try again later"}`, with `Retry-After: 10`. Submits to other SMSCs
+  are still taken.
+
+A client tells them apart by the `Retry-After` header.
+
 == Status callback
 
 A message submitted with a `callback_url` gets one `POST` to that URL when it reaches a final

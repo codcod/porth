@@ -67,7 +67,9 @@ class Gateway:
             uow_factory = lambda: SqlAlchemyUnitOfWork(engine)  # noqa: E731
         self.uow_factory = uow_factory
         self.router = Router(settings.smsc, settings.routing)
-        self.queues = {name: MessageQueue() for name in settings.smsc}
+        self.queues = {
+            name: MessageQueue(settings.delivery.queue_limit) for name in settings.smsc
+        }
         self.dlr_handler = DLRHandler(
             uow_factory, rest_window=settings.http.callback_retry_minutes * 60
         )
@@ -106,9 +108,7 @@ class Gateway:
             self.smpp_clients.extend(self.binds[name])
             # Read at scrape; a second gateway in one process (tests) rebinds them
             metrics.waiting.labels(name).set_function(self.queues[name].qsize)
-            metrics.retrying.labels(name).set_function(
-                functools.partial(len, self.engines[name]._retries)
-            )
+            metrics.retrying.labels(name).set_function(self.queues[name].retrying)
             metrics.bound.labels(name).set_function(
                 functools.partial(self._bound, name)
             )
@@ -123,7 +123,7 @@ class Gateway:
             name: {
                 'bound': self._bound(name),
                 'waiting': engine.message_queue.qsize(),
-                'retrying': len(engine._retries),
+                'retrying': engine.message_queue.retrying(),
             }
             for name, engine in self.engines.items()
         }

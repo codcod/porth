@@ -64,7 +64,6 @@ class DeliveryEngine:
         self.smpp_client = smpp_client
         self.workers: list[asyncio.Task] = []
         self.running = False
-        self._retries: set[asyncio.Task] = set()
         self.log = logging.LoggerAdapter(logger, {'smsc': smsc}, merge_extra=True)
 
     async def start(self) -> None:
@@ -93,15 +92,15 @@ class DeliveryEngine:
 
         self.running = False
 
-        # Cancel all workers and pending retries (a message waiting to retry stays
+        # Cancel all workers, then pending retries (a message waiting to retry stays
         # queued in the store, and the next start queues it again)
-        tasks = [*self.workers, *self._retries]
-        for task in tasks:
+        for task in self.workers:
             task.cancel()
 
         # Wait for them to finish
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
+        await self.message_queue.cancel_retries()
 
         self.log.info(f'SMSC {self.smsc}: Delivery engine stopped')
 
@@ -129,11 +128,6 @@ class DeliveryEngine:
                 self.log.error(f'Error in delivery worker {worker_name}: {e}')
 
         self.log.info(f'Delivery worker {worker_name} stopped')
-
-    async def _requeue_later(self, message: SMSMessage, delay: int) -> None:
-        """Put message back on the queue after delay seconds."""
-        await asyncio.sleep(delay)
-        await self.message_queue.put(message)
 
     async def _process_message(self, message: SMSMessage) -> None:
         """Process a single message."""
@@ -268,9 +262,7 @@ class DeliveryEngine:
                 extra={'message_id': message.message_id},
             )
             metrics.retries.labels(self.smsc).inc()
-            task = asyncio.create_task(self._requeue_later(message, delay))
-            self._retries.add(task)
-            task.add_done_callback(self._retries.discard)
+            self.message_queue.put_later(message, delay)
         else:
             self.log.error(
                 f'Message {message.message_id}: attempt {message.retry_count}/{config.max_retries} failed, giving up',

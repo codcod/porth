@@ -195,7 +195,8 @@ Not supported
 memory | Always, in PostgreSQL or a SQLite file (see <<What a restart keeps>>) | Different
 | Resend of a temporarily failed message | `sms-resend-freq`, unlimited by default |
 Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>) | Different
-| Queue limits | `sms-*-queue-limit` | No | Not supported
+| Queue limits | `sms-*-queue-limit` | `delivery.queue_limit`, for each SMSC, counting
+messages waiting to retry; `high` messages up to twice it (see <<Settings>>) | Different
 | Suspend, isolate, graceful drain | Admin commands | No | Not supported
 | Process model | A bearerbox and one or more smsboxes | One process (see
 <<Architecture>>) | Different
