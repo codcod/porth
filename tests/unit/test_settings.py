@@ -157,10 +157,27 @@ def test_wrong_type_raises_naming_key(tmp_path, text, key):
         load(tmp_path, text)
 
 
+SMSC = '[porth.smsc.a]\nhost = "h"\nsystem_id = "s"\npassword = "p"\n'
+
+
 def test_missing_required_key_raises_naming_it(tmp_path):
     text = '[porth.smsc.a]\nsystem_id = "p"\npassword = "s"\n'
     with pytest.raises(ValueError, match='porth.smsc.a.host is required'):
         load(tmp_path, text)
+
+
+def test_tls_ca_file_without_tls_raises(tmp_path):
+    text = SMSC + 'tls_ca_file = "/ca.pem"\n'
+    with pytest.raises(ValueError, match='porth.smsc.a.tls_ca_file: set tls = true'):
+        load(tmp_path, text)
+
+
+@pytest.mark.parametrize('ca', [None, '/ca.pem'])
+def test_tls_loads_with_or_without_ca_file(tmp_path, ca):
+    text = SMSC + 'tls = true\n' + (f'tls_ca_file = "{ca}"\n' if ca else '')
+    smsc = load(tmp_path, text).smsc['a']
+    assert (smsc.tls, smsc.tls_ca_file) == (True, ca)
+    assert load(tmp_path, SMSC).smsc['a'].tls is False
 
 
 def test_kannel_users_load(tmp_path):

@@ -37,8 +37,8 @@ The tables below list every difference, and <<Differences from Kannel 1.4.5>> de
   <<Monitoring>>), and links can't be stopped, started or reloaded at runtime.
 * {product} never accepts SMPP binds, so it can't take the place of opensmppbox.
 * {product}'s listeners have no TLS of their own: terminate it at a reverse proxy (see
-  <<tls-proxy>>). There is no TLS on the SMSC link. Both are scope decisions (see <<Scope>>),
-  and <<Limitations>> lists what is not built yet.
+  <<tls-proxy>>), a scope decision (see <<Scope>>). <<Limitations>> lists what is not built
+  yet.
 * Applications that rely on `post-url`, MO keywords, `deferred`, `priority` or per-user
   settings (`forced-smsc`, `max-messages`, white and black lists) need changes.
 
@@ -178,7 +178,8 @@ supported
 `receive_port` | Same
 | `system-type` | Defaults to `VMA` | Defaults to empty | Different
 | Source and destination TON/NPI | Fixed or autodetected | Autodetected only | Different
-| SMPP over TLS (`use-ssl`) | Yes | No | Not supported
+| SMPP over TLS (`use-ssl`) | Yes | Yes, `tls`: opt-in per SMSC, the certificate always
+verified; no client certificate (`ssl-client-certkey-file`) | Different
 | `enquire-link-interval`, `max-pending-submits`, `connection-timeout`, `msg-id-type`,
 `service-type`, `address-range`, `esm-class`, `alt-charset` | Configurable | Fixed defaults |
 Not supported
@@ -213,7 +214,7 @@ Exponential backoff, at most `delivery.max_retries` attempts (see <<Lifecycle>>)
 | Runtime control (`start-smsc`, `stop-smsc`, `restart`, `reload-lists`, `log-level`) | Yes |
 No | Not supported
 | TLS on listeners | Yes | No, terminate TLS at a proxy (see <<tls-proxy>>) | Different
-| TLS on SMSC links | Yes | No (see <<Limitations>>) | Not supported
+| TLS on SMSC links | Yes | Yes, `tls` (see <<SMSCs>>) | Different
 | Logging | Log files, syslog, access log | Standard error; JSON lines with `log_format = "json"` | Different
 | Outbound HTTP proxy | Yes | No | Not supported
 |===

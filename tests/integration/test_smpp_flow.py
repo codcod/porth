@@ -2,11 +2,14 @@
 
 import asyncio
 import functools
+import pathlib
 import socket
+import ssl
 
 import aiohttp
 
 import pytest
+import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from smpp import NpiType, SMPPServer, TonType
@@ -403,3 +406,64 @@ async def test_each_number_goes_out_through_its_prefixs_smsc(uow_factory):
         for server in servers:
             await server.stop()
     assert received == {'a': ['306900000001'], 'b': ['447000000001']}
+
+
+TLS_DIR = pathlib.Path(__file__).parents[1] / 'fixtures' / 'tls'
+
+
+@pytest_asyncio.fixture
+async def tls_server():
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(TLS_DIR / 'cert.pem', TLS_DIR / 'key.pem')
+    server = SMPPServer(
+        host='127.0.0.1', port=free_port(), setup_signal_handlers=False, ssl=ctx
+    )
+    server.received = []
+
+    def on_message_received(server, session, pdu):
+        server.received.append(pdu)
+        return 'smsc-1'
+
+    server.on_message_received = on_message_received
+    await server.start()
+    yield server
+    await server.stop()
+
+
+def tls_client(server, **kwargs) -> SMPPClient:
+    config = SMPPClientConfig(
+        host='localhost',
+        port=server.port,
+        system_id='porth',
+        password='pw',
+        tls=True,
+        **kwargs,
+    )
+    return SMPPClient('a', config)
+
+
+@pytest.mark.asyncio
+async def test_tls_bind_sends_submit_sm(tls_server):
+    """With the SMSC's CA, porth binds over TLS and a message arrives as submit_sm."""
+    porth_client = tls_client(tls_server, tls_ca_file=str(TLS_DIR / 'cert.pem'))
+    message = SMSMessage(
+        source_addr='1234',
+        destination_addr='5678',
+        message_text='over tls',
+        protocol='http',
+        smsc='a',
+    )
+    try:
+        await porth_client.send_message(message)
+    finally:
+        await porth_client.disconnect()
+    assert [pdu.get_message_text() for pdu in tls_server.received] == ['over tls']
+
+
+@pytest.mark.asyncio
+async def test_tls_without_ca_file_refuses_untrusted_smsc(tls_server):
+    """Verification is on: the system CAs do not trust the self-signed certificate."""
+    porth_client = tls_client(tls_server)
+    with pytest.raises(Exception, match='CERTIFICATE_VERIFY_FAILED'):
+        await porth_client.connect()
+    assert not tls_server.received

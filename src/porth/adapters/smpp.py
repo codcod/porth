@@ -4,6 +4,7 @@ import asyncio
 import collections
 import contextlib
 import logging
+import ssl
 import typing as tp
 
 import smpp
@@ -111,6 +112,15 @@ class SMPPClient:
         self.label = name if bind == 'trx' else f'{name} ({bind})'
         self.log = logging.LoggerAdapter(logger, {'smsc': name}, merge_extra=True)
         self._pacer = Pacer(throughput) if throughput is not None else None
+        # Built here, so --check (which constructs every client) catches a bad CA file
+        self._ssl: tp.Optional[ssl.SSLContext] = None
+        if config.tls:
+            try:
+                self._ssl = ssl.create_default_context(cafile=config.tls_ca_file)
+            except (OSError, ssl.SSLError) as e:
+                raise ValueError(
+                    f'invalid porth.smsc.{name}.tls_ca_file: {e}'
+                ) from None
         self.on_receipt = on_receipt
         self.on_mo = on_mo
         self.client: tp.Optional[SmppaiClient] = None
@@ -144,6 +154,7 @@ class SMPPClient:
                         self.config.password,
                         bind=self.bind,
                         system_type=self.config.system_type,
+                        ssl=self._ssl,
                     )
                 )
             # BaseException incl. CancelledError: log it, smppai has closed the bind.
@@ -159,6 +170,7 @@ class SMPPClient:
             self.log.info(
                 f'SMSC {self.label}: SMPP client connected to '
                 f'{self.config.host}:{self.port}'
+                f'{" over TLS" if self._ssl else ""}'
             )
             return inbound.raw
 
