@@ -26,7 +26,11 @@ _DLR_BIT = {
     MessageStatus.EXPIRED: 2,
 }
 _ATTEMPTS = 3  # a Kannel dlr-url GET: waits 1, 2 s
-_REST_ATTEMPTS = 8  # a REST status callback POST: waits 2, 4 … 128 s
+# A REST status callback POST waits 2, 4 … s, at most this, while the waits fit its window.
+# ponytail: one sleeping task per pending call (~KB each; a 1 h outage at 10 statuses/s
+# is ~100 MB), and a restart starts every window again; persist a next_attempt_at on
+# dlr_callbacks with one poller if that ceiling matters
+_REST_MAX_WAIT = 300
 # Seconds between look-ups of a receipt's unknown SMSC id: a part's receipt can
 # beat the indexing of the message's ids, which waits for every part's submit_sm_resp.
 # ponytail: one task per unknown receipt, add a cap if an SMSC floods unknown ids
@@ -60,9 +64,11 @@ class DLRHandler:
         self,
         uow_factory: tp.Callable[[], AbstractUnitOfWork],
         client: tp.Optional[CallbackClient] = None,
+        rest_window: int = 300,  # seconds a REST status callback is retried
     ):
         self.uow_factory = uow_factory
         self.client = client or CallbackClient(timeout=10)
+        self.rest_window = rest_window
         self._tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
@@ -296,8 +302,9 @@ class DLRHandler:
     ) -> None:
         """GET url (Kannel) or POST body to it (REST), retrying until a 2xx."""
         kind = _kind(body)
-        attempts = _ATTEMPTS if body is None else _REST_ATTEMPTS
-        for attempt in range(attempts):
+        attempt = waited = 0
+        while True:
+            attempt += 1
             try:
                 if body is None:
                     status = await self.client.get_status(url)
@@ -309,13 +316,22 @@ class DLRHandler:
             except Exception as e:  # client-supplied URL: anything can go wrong
                 error = repr(e)
             logger.warning(
-                f'{kind} for {message_id}, attempt {attempt + 1}/{attempts}: {error}',
+                f'{kind} for {message_id}, attempt {attempt}: {error}',
                 extra={'message_id': message_id},
             )
-            if attempt + 1 < attempts:
-                await asyncio.sleep(2 ** (attempt if body is None else attempt + 1))
+            if body is None:
+                if attempt == _ATTEMPTS:
+                    break
+                wait = 2 ** (attempt - 1)
+            else:
+                wait = min(2**attempt, _REST_MAX_WAIT)
+                if waited + wait > self.rest_window:
+                    break
+            waited += wait
+            await asyncio.sleep(wait)
+        window = '' if body is None else f' over {self.rest_window // 60} min'
         logger.error(
-            f'{kind} for {message_id} gave up after {attempts} attempts',
+            f'{kind} for {message_id} gave up after {attempt} attempts{window}',
             extra={'message_id': message_id},
         )
 

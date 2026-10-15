@@ -17,6 +17,7 @@ def load(tmp_path, text):
 def test_minimal_table_gives_defaults(tmp_path):
     settings = load(tmp_path, '[porth]\n')
     assert settings.http.port == 8080
+    assert settings.http.callback_retry_minutes == 5
     assert settings.kannel.port == 13013
     assert settings.smsc == {}
     assert (settings.routing.default, settings.routing.prefixes) == (None, {})
@@ -254,6 +255,14 @@ def test_store_window_below_one_raises(tmp_path, key):
         ValueError, match=f'invalid porth.store.{key}: must be at least 1'
     ):
         load(tmp_path, f'[porth.store]\n{key} = 0\n')
+
+
+def test_callback_retry_minutes_below_one_raises(tmp_path):
+    with pytest.raises(
+        ValueError,
+        match='invalid porth.http.callback_retry_minutes: must be at least 1',
+    ):
+        load(tmp_path, '[porth.http]\ncallback_retry_minutes = 0\n')
 
 
 def test_shipped_config_loads():

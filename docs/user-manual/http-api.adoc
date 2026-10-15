@@ -140,8 +140,10 @@ status, so the client need not poll. The body is JSON:
   HTTP client may normalise its percent-encoding (`%41` is sent as `A`, a stray `%` as `%25`),
   which servers read the same way.
 * Any `2xx` answer ends the call. Anything else, a redirect or a connection error included,
-  is retried, up to 8 attempts, waiting 2, 4, 8 … 128 s between them (about 4 minutes in
-  all). Then the call is given up and logged. A redirect is not followed.
+  is retried, waiting 2, 4, 8 … s between attempts (at most 300 s each), for
+  `http.callback_retry_minutes` (5 by default: 8 attempts over about 4 minutes; see
+  <<Settings>>). Then the call is given up and logged. A restart starts the window again. A
+  redirect is not followed.
 * The call is stored with the status, so a call cut short by a restart is made again when
   {product} starts. The client can therefore get the same status twice, and should treat a
   repeat as a no-op.

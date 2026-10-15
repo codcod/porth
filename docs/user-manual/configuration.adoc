@@ -32,6 +32,8 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
 * `log_level` is not a Python logging level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
   `CRITICAL`);
 * `log_format` is neither `text` nor `json` (`invalid porth.log_format: 'xml'`);
+* `http.callback_retry_minutes` is below 1
+  (`invalid porth.http.callback_retry_minutes: must be at least 1`);
 * an SMSC's `tls_ca_file` is set without `tls = true`
   (`invalid porth.smsc.op-a.tls_ca_file: set tls = true to use it`), or can't be read as PEM
   CA certificates (`invalid porth.smsc.op-a.tls_ca_file: [Errno 2] No such file or
@@ -56,6 +58,12 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
 | `http.host` | `0.0.0.0` | Address the HTTP API listens on.
 | `http.port` | `8080` | Port the HTTP API listens on.
 | `http.users.<name>` | none | One `/api/v1` caller per table. See <<HTTP users>>.
+| `http.callback_retry_minutes` | `5` | How long a REST status callback is retried, in minutes.
+  Waits double from 2 s, at most 300 s each, and a new attempt is made while the waits fit
+  the window: the default gives 8 attempts over about 4 minutes. The last attempt can come up
+  to 300 s before the window ends, so set it about 5 minutes above the longest receiver
+  outage to cover (65 for an hour). A restart starts the window again. A Kannel `dlr-url`
+  keeps its 3 attempts.
 | `kannel.host` | `0.0.0.0` | Address the Kannel-compatible API listens on.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's

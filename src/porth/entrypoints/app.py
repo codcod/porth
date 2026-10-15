@@ -68,7 +68,9 @@ class Gateway:
         self.uow_factory = uow_factory
         self.router = Router(settings.smsc, settings.routing)
         self.queues = {name: MessageQueue() for name in settings.smsc}
-        self.dlr_handler = DLRHandler(uow_factory)
+        self.dlr_handler = DLRHandler(
+            uow_factory, rest_window=settings.http.callback_retry_minutes * 60
+        )
         self.sweeper = Sweeper(uow_factory, self.dlr_handler, settings.store)
         self.mo_handler = MOHandler(self.queues, uow_factory, settings.mo)
         self.servers: list[web.BaseRunner] = []
