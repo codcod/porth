@@ -600,3 +600,20 @@ async def test_dlr_url_body_is_never_read(uow_factory):
         server.close()
         await server.wait_closed()
     assert len(hits) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_callback_logs_the_error_class_not_the_url(store, handler, caplog):
+    # aiohttp's InvalidUrlClientError prints the URL, %p (the number) expanded in it
+    sent(
+        store,
+        ['s1'],
+        'kannel',
+        'dlr?p=%p',
+        dlr_mask=1,
+        destination_addr='+447700900123',
+    )
+    await handler.on_receipt(receipt('s1', MessageState.DELIVERED), 'a')
+    await settle(handler)
+    assert 'InvalidUrlClientError' in caplog.text
+    assert '447700900123' not in caplog.text

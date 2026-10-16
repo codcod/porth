@@ -24,6 +24,7 @@ from smpp.protocol.codec import encode_message_with_encoding
 from smpp.utils import format_smpp_time
 
 from porth import metrics
+from porth.logs import masked
 from porth.config.settings import SMPPClientConfig
 from porth.domain.exceptions import MessageError
 from porth.domain.model import SMSMessage
@@ -314,7 +315,7 @@ class SMPPClient:
                 )
                 if handler is None:
                     self.log.info(
-                        f'SMSC {self.label}: Inbound {kind} from {msg.sender} dropped'
+                        f'SMSC {self.label}: Inbound {kind} from {masked(msg.sender.addr)} dropped'
                     )
                     continue
                 try:

@@ -215,7 +215,7 @@ async def test_unroutable_number_is_400_and_stores_nothing(http, queues):
     assert resp.status == 400
     assert await resp.json() == {
         'error': 'Failed to send SMS',
-        'details': "no route for '15550000001'",
+        'details': 'no route for the destination number',
     }
     assert all(q.empty() for q in queues.values())
     assert store.messages == {}

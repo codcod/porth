@@ -70,3 +70,18 @@ def test_a_new_alembic_revision_needs_a_sqlite_schema_step():
 def test_an_in_memory_sqlite_database_is_refused(db):
     with pytest.raises(ValueError, match='in-memory SQLite'):
         Gateway(Settings(db=db))
+
+
+@pytest.mark.asyncio
+async def test_database_errors_hide_bound_parameters(tmp_path):
+    engine = make_engine(f'sqlite+aiosqlite:///{tmp_path}/porth.db')
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sa.text('CREATE TABLE t (id TEXT PRIMARY KEY)'))
+        row = {'id': '+447700900123'}
+        with pytest.raises(sa.exc.IntegrityError) as e:
+            async with engine.begin() as conn:
+                await conn.execute(sa.text('INSERT INTO t VALUES (:id)'), [row, row])
+        assert '447700900123' not in str(e.value)
+    finally:
+        await engine.dispose()

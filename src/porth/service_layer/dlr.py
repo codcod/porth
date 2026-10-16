@@ -314,7 +314,8 @@ class DLRHandler:
                     return
                 error = f'HTTP {status}'
             except Exception as e:  # client-supplied URL: anything can go wrong
-                error = repr(e)
+                # The class only: the text can carry the URL, and with it the number
+                error = type(e).__name__
             logger.warning(
                 f'{kind} for {message_id}, attempt {attempt}: {error}',
                 extra={'message_id': message_id},

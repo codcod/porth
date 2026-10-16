@@ -36,7 +36,7 @@ id=$(curl -s -X POST localhost:8080/api/v1/sms/send \
     | jq -r .message_id)
 curl -s localhost:8080/api/v1/sms/status/$id
 
-# An MO from the simulator: porth logs "MO from 306900000000 dropped: mo.url is not set"
+# An MO from the simulator: porth logs "MO from ***000 dropped: mo.url is not set"
 curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
 docker compose -f compose.demo.yaml logs porth | grep 'MO from'
 

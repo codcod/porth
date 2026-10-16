@@ -36,7 +36,7 @@ def test_default_when_no_prefix_matches():
 
 
 def test_no_default_is_no_route():
-    with pytest.raises(NoRoute, match='15550000001'):
+    with pytest.raises(NoRoute, match='no route for the destination number'):
         R.route('15550000001')
 
 

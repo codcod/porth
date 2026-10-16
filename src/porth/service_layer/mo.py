@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from smpp import Address, DataCoding, Message, TonType
 
 from porth import metrics
+from porth.logs import masked
 from porth.adapters.callbacks import CallbackClient
 from porth.config.settings import MOConfig
 from porth.service_layer import services
@@ -90,13 +91,13 @@ class MOHandler:
         own task."""
         if not self.config.url:
             logger.info(
-                f'MO from {msg.sender.addr} dropped: mo.url is not set',
+                f'MO from {masked(msg.sender.addr)} dropped: mo.url is not set',
                 extra={'smsc': smsc},
             )
             return
         if msg.text is None:
             logger.info(
-                f'MO from {msg.sender.addr} dropped: text not decodable',
+                f'MO from {masked(msg.sender.addr)} dropped: text not decodable',
                 extra={'smsc': smsc},
             )
             return
@@ -115,12 +116,12 @@ class MOHandler:
         )
 
     async def _forward(self, msg: Message, smsc: str, url: str) -> None:
-        sender, body = msg.sender.addr, ''
+        sender, body = masked(msg.sender.addr), ''
         try:
             status, content_type, text = await self.client.get(url, self._wants_reply)
         except Exception as e:  # operator-supplied URL: anything can go wrong
             logger.warning(
-                f'MO from {sender}: application request failed: {e!r}',
+                f'MO from {sender}: application request failed: {type(e).__name__}',
                 extra={'smsc': smsc},
             )
             metrics.mo.labels(smsc, 'failed').inc()

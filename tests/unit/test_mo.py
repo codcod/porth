@@ -222,3 +222,22 @@ async def test_undecodable_body_fails_only_a_reply(status, result):
     _, queue, _ = await forward(response=bad)
     assert queue.empty()
     assert sample('porth_mo_total', smsc='a', result=result) == count + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'kwargs',
+    [
+        dict(url=''),
+        dict(),
+        dict(url='mo?p=%p'),  # aiohttp's InvalidUrlClientError prints the URL
+        dict(fail=OSError('database down')),  # a DBAPIError's text: test_db.py
+    ],
+    ids=['no-url', 'forwarded', 'request-failed', 'reply-not-stored'],
+)
+async def test_logs_show_only_the_senders_last_three_digits(caplog, kwargs):
+    caplog.set_level('INFO')
+    await forward(**kwargs)
+    mo_lines = [r.getMessage() for r in caplog.records if 'MO from' in r.getMessage()]
+    assert mo_lines and all('MO from ***001' in line for line in mo_lines)
+    assert '306900000001' not in caplog.text

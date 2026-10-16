@@ -15,6 +15,11 @@ _PLAIN = {
 }
 
 
+def masked(number: str) -> str:
+    """A subscriber number as logged: its last three digits only (design.md 4.6)."""
+    return '***' + number[-3:]
+
+
 class JsonFormatter(logging.Formatter):
     """time (UTC), level, logger, message, exc (with a traceback), then the extras."""
 

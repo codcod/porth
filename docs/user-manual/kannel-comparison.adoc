@@ -217,6 +217,7 @@ No | Not supported
 | TLS on listeners | Yes | No, terminate TLS at a proxy (see <<tls-proxy>>) | Different
 | TLS on SMSC links | Yes | Yes, `tls` (see <<SMSCs>>) | Different
 | Logging | Log files, syslog, access log | Standard error; JSON lines with `log_format = "json"` | Different
+| Numbers in logs | In full | Masked to the last three digits (`***567`) | Different
 | Outbound HTTP proxy | Yes | No | Not supported
 |===
 
