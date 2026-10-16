@@ -276,6 +276,32 @@ scrape_configs:
       - targets: ["porth.internal:8080"]
 ----
 
+The repository ships a Grafana dashboard and Prometheus alert rules for these metrics. To
+use the dashboard, import `deploy/grafana/porth.json` into Grafana and pick your Prometheus
+data source. Its `SMSC` variable filters the per-SMSC panels. For the alerts, add
+`deploy/prometheus/alerts.yml` under `rule_files:`. The rules assume the `porth` job above,
+and every rule over a counter uses `rate()`, because counters start from zero at every
+restart.
+
+[cols="1,1,3",options="header"]
+|===
+| Alert | Severity | Fires when
+
+| `PorthDown` | critical | Prometheus has failed to scrape {product}, or has no target for
+it, for 2 minutes.
+| `PorthSmscUnbound` | critical | An SMSC has stayed unbound for 5 minutes.
+| `PorthBacklogGrowing` | warning | Over 1000 messages are waiting or retrying for one
+SMSC, and the number has kept rising for 15 minutes.
+| `PorthFailedRatioHigh` | warning | Over 20% of an SMSC's final statuses in 15 minutes are
+`failed`. An SMSC with fewer than 0.1 final statuses a second is ignored.
+| `PorthReceiptsUnmatched` | warning | Over 5% of an SMSC's delivery receipts in 30 minutes
+matched no message.
+|===
+
+The thresholds are starting points, so tune them to your traffic. If you set
+`delivery.queue_limit`, keep the backlog threshold below it. {product} refuses submits at
+the limit, so the backlog never grows past it and an alert set above it cannot fire.
+
 Kubernetes-style probes:
 
 [source,yaml]

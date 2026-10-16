@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- A Grafana dashboard (`deploy/grafana/porth.json`) and five Prometheus alert rules
+  (`deploy/prometheus/alerts.yml`) for porth's metrics: SMSC bound, traffic, backlog,
+  submit latency, SMPP errors and receipt matching. The alerts cover porth down, SMSC
+  unbound, a growing backlog, a high failed ratio and unmatched receipts, with starting
+  thresholds (POR-044).
 - Per-SMSC SMPP timers, in whole seconds: `reconnect_delay` (10), `enquire_link_interval`
   (60), `bind_timeout` (30) and `response_timeout` (30), so porth can follow an operator's
   keepalive and timeout terms. The defaults are today's values; each must be at least 1
