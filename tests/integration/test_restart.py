@@ -204,6 +204,10 @@ async def _is(engine, message_id: str, expected: str) -> bool:
     return await status(engine, message_id) == expected
 
 
+async def not_stored(engine, message_id: str) -> bool:
+    return not await callback_stored(engine, message_id)
+
+
 def bound(gw: Gateway) -> bool:
     return gw.smpp_clients[0].connected
 
@@ -225,6 +229,9 @@ async def test_queued_message_survives_restart_and_is_sent_once(env):
             await smsc.receipt()
             await until(lambda: _is(engine, message_id, 'delivered'))
             await until(lambda: target.queries)
+            # The call is forgotten just after it is made: a stop before that keeps it
+            # stored, by design (at-least-once), so wait for it
+            await until(lambda: not_stored(engine, message_id))
         finally:
             await third.stop()
     finally:
