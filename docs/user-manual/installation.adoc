@@ -78,7 +78,7 @@ docker compose -f compose.demo.yaml up -d
 == Container image
 
 Every release publishes the image `ghcr.io/codcod/porth:<version>` (for example
-`ghcr.io/codcod/porth:0.3.0`), and `ghcr.io/codcod/porth:latest` names the most recently
+`ghcr.io/codcod/porth:0.4.0`), and `ghcr.io/codcod/porth:latest` names the most recently
 tagged release.
 It runs on `linux/amd64` and `linux/arm64`, and needs no Python or uv on the host. It is a
 distroless Python 3.13 runtime holding `bin/porth`, the default `config/`, the migrations and
