@@ -157,8 +157,8 @@ Different
 `fallback_after` s unbound, messages move to it while it is bound (see <<Routing>>) |
 Different
 | `throughput` per SMSC | Yes | Yes, in `submit_sm` PDUs per second | Same
-| Reconnect after a dropped bind | `reconnect-delay`, 10 s by default | Every 10 s, not
-configurable | Different
+| Reconnect after a dropped bind | `reconnect-delay`, 10 s by default | `reconnect_delay`,
+10 s by default | Same
 | `reroute`, loopback, `smsbox-route` | Yes | No | Not supported
 |===
 
@@ -180,7 +180,12 @@ supported
 | Source and destination TON/NPI | Fixed or autodetected | Autodetected only | Different
 | SMPP over TLS (`use-ssl`) | Yes | Yes, `tls`: opt-in per SMSC, the certificate always
 verified; no client certificate (`ssl-client-certkey-file`) | Different
-| `enquire-link-interval`, `max-pending-submits`, `connection-timeout`, `msg-id-type`,
+| `enquire-link-interval` | 30 s by default | `enquire_link_interval`, 60 s by default |
+Same
+| `wait-ack` | 60 s by default; an expired wait is re-queued by `wait-ack-expire` |
+`response_timeout`, 30 s by default; an expired wait is a failed attempt, retried |
+Different
+| `max-pending-submits`, `connection-timeout`, `msg-id-type`,
 `service-type`, `address-range`, `esm-class`, `alt-charset` | Configurable | Fixed defaults |
 Not supported
 |===

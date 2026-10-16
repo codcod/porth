@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- Per-SMSC SMPP timers, in whole seconds: `reconnect_delay` (10), `enquire_link_interval`
+  (60), `bind_timeout` (30) and `response_timeout` (30), so porth can follow an operator's
+  keepalive and timeout terms. The defaults are today's values; each must be at least 1
+  (POR-042).
 - Failover between SMSCs: `fallback = "<name>"` in a `[porth.smsc.<name>]` table, with
   `fallback_after` (default 10 s). When a worker takes a message whose SMSC has been unbound
   that long, the message moves to the fallback's queue, provided the fallback is bound and
