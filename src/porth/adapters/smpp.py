@@ -31,10 +31,6 @@ from porth.domain.model import SMSMessage
 
 logger = logging.getLogger(__name__)
 
-# Kannel's reconnect-delay default.
-# ponytail: fixed 10 s, make it a setting if an operator needs another
-_REBIND_DELAY = 10.0
-
 
 def choose_data_coding(text: str) -> tuple[DataCoding, int]:
     """
@@ -168,6 +164,9 @@ class SMPPClient:
                         bind=self.bind,
                         system_type=self.config.system_type,
                         ssl=self._ssl,
+                        bind_timeout=self.config.bind_timeout,
+                        enquire_link_interval=self.config.enquire_link_interval,
+                        response_timeout=self.config.response_timeout,
                     )
                 )
             # BaseException incl. CancelledError: log it, smppai has closed the bind.
@@ -198,7 +197,7 @@ class SMPPClient:
             if not self.connected:
                 with contextlib.suppress(Exception):  # connect() logged it
                     await self.connect()
-            await asyncio.sleep(_REBIND_DELAY)
+            await asyncio.sleep(self.config.reconnect_delay)
 
     async def disconnect(self) -> None:
         """Stop the rebind loop, then close the bind, draining its receipts."""

@@ -124,14 +124,15 @@ Spaces and `-` in numbers are ignored.
 bind on its own. While the receiver bind is down, sends go on and the SMSC holds the
 receipts and MO until it is back. While the transmitter bind is down, sends are retried.
 
-* If the bind fails at startup, the gateway still starts and retries the bind every 10 s.
+* If the bind fails at startup, the gateway still starts and retries the bind every
+  `reconnect_delay` (10 s).
 * With a `fallback`, messages move once the bind has been down `fallback_after` seconds (see
   <<Routing>>). A bind lost without notice is counted from the next rebind attempt, up to
-  10 s late.
-* A bind that is lost, or that the SMSC unbinds, is reopened within 10 s, even when nothing
-  is being sent.
+  one `reconnect_delay` late.
+* A bind that is lost, or that the SMSC unbinds, is reopened within `reconnect_delay`
+  (10 s), even when nothing is being sent.
 * When a send fails at the transport level (timeout, lost connection, not bound), {product}
-  drops the bind. The next send, or the 10 s retry, opens a new one.
+  drops the bind. The next send, or the next rebind attempt, opens a new one.
 * An error *response* from the SMSC, such as an invalid destination or throttling, keeps the
   bind open. That message goes through the normal retry path.
 * A send that times out is retried, even though the SMSC may already have accepted it. The
@@ -168,7 +169,7 @@ callback, see <<Delivery reports>>.
   responses.
 * A receipt for a message that is already `delivered`, `failed` or `expired` is ignored.
 * Receipts arrive only while the bind is up. After a lost bind, the receipts the SMSC holds
-  arrive once {product} rebinds, within 10 s.
+  arrive once {product} rebinds, within `reconnect_delay` (10 s).
 * Receipts already received when {product} closes a bind are still applied.
 * A receipt that arrives after a restart still reaches its message, since the SMSC message
   ids are kept in the database with the message.

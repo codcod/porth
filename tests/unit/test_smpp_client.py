@@ -214,6 +214,20 @@ async def test_connect_binds_as_bind_on_port(monkeypatch, kwargs, bind, port, la
 
 
 @pytest.mark.asyncio
+async def test_connect_passes_smpp_timers(smpp):
+    smpp.config.bind_timeout = 5
+    smpp.config.enquire_link_interval = 20
+    smpp.config.response_timeout = 7
+    await smpp.connect()
+    kwargs = FakeSmppai.instances[0].kwargs
+    timers = ('bind_timeout', 'enquire_link_interval', 'response_timeout')
+    assert {k: kwargs[k] for k in timers} == dict(
+        bind_timeout=5, enquire_link_interval=20, response_timeout=7
+    )
+    await smpp.disconnect()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('tls', [False, True])
 async def test_connect_passes_tls_context(monkeypatch, tls):
     calls = []
@@ -483,8 +497,8 @@ def startup_bind_failed(fake):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('outage', [lose_connection, smsc_unbind, startup_bind_failed])
-async def test_rebind_loop_rebinds_without_sends(smpp, monkeypatch, outage):
-    monkeypatch.setattr(client_module, '_REBIND_DELAY', 0.01)
+async def test_rebind_loop_rebinds_without_sends(smpp, outage):
+    smpp.config.reconnect_delay = 0.01
     FakeSmppai.fail_connect = outage is startup_bind_failed
     smpp.start()
     await until(lambda: FakeSmppai.instances)
@@ -501,10 +515,10 @@ async def test_rebind_loop_rebinds_without_sends(smpp, monkeypatch, outage):
 
 
 @pytest.mark.asyncio
-async def test_disconnect_waits_for_a_drain_the_rebind_loop_left(smpp, monkeypatch):
+async def test_disconnect_waits_for_a_drain_the_rebind_loop_left(smpp):
     """POR-013 review F3: disconnect() cancels the rebind loop inside _drop(); the
     shielded drain goes on, and disconnect() must wait for it."""
-    monkeypatch.setattr(client_module, '_REBIND_DELAY', 0.01)
+    smpp.config.reconnect_delay = 0.01
     started, release, stored = asyncio.Event(), asyncio.Event(), []
 
     async def on_receipt(m):  # a slow database write

@@ -65,6 +65,12 @@ reply = true
 # Another SMSC that takes this one's messages once it has been unbound fallback_after s.
 # fallback = "other"
 # fallback_after = 10
+# SMPP timers, in seconds: the pause between rebind attempts, the enquire_link keepalive,
+# the wait for bind_resp and for any other response (it also bounds the connect).
+# reconnect_delay = 10
+# enquire_link_interval = 60
+# bind_timeout = 30
+# response_timeout = 30
 
 # Which SMSC a number goes out through: the longest matching prefix (digits, matched
 # without a leading +), else default.

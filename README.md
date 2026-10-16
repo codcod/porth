@@ -85,7 +85,7 @@ sequenceDiagram
     alt every part accepted
         W->>DB: status = sent, store SMSC ids
     else transient error / bind lost
-        W->>Q: requeue after backoff (rebind every 10 s)
+        W->>Q: requeue after backoff (rebind every reconnect_delay, 10 s)
     else permanent error or retries exhausted
         W->>DB: status = failed
     end
@@ -172,7 +172,7 @@ worker_count = 10
 - **Sending.** A message is sent as one `submit_sm` per part, and marked `sent`
   once the SMSC accepts every part.
 - **SMSC unreachable.** The gateway still starts and retries the bind every
-  10 s.
+  `reconnect_delay` (10 s by default).
 - **Long messages.** Text longer than one SMS (160 GSM-7 characters, where
   extension characters such as `€` count as two, or 70 UCS-2 characters) is
   sent as a concatenated SMS of up to 255 parts.

@@ -62,6 +62,11 @@ class SMPPClientConfig:
     tls_ca_file: tp.Optional[str] = None  # PEM CAs in place of the system ones
     fallback: tp.Optional[str] = None  # takes messages while this SMSC is unbound
     fallback_after: int = 10  # seconds unbound before messages move to fallback
+    reconnect_delay: int = 10  # seconds between rebind attempts
+    enquire_link_interval: int = 60  # seconds between keepalive enquire_links
+    bind_timeout: int = 30  # seconds to wait for bind_*_resp
+    # seconds to wait for any other response; also bounds the TCP and TLS connect
+    response_timeout: int = 30
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -121,8 +126,9 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
     Read the `[porth]` table of the TOML file at `path` (other tables are ignored).
     An unknown key, a wrong type, a missing required key, an unknown log_level or
     log_format, or a store window, http.callback_retry_minutes, delivery.queue_limit or
-    an SMSC's fallback_after below 1, or a fallback naming no other SMSC, raises
-    ValueError naming the key.
+    an SMSC's fallback_after, reconnect_delay, enquire_link_interval, bind_timeout or
+    response_timeout below 1, or a fallback naming no other SMSC, raises ValueError
+    naming the key.
     """
     data = monobase.config.read_config(os.fspath(path))
     if not isinstance(data.get('porth'), dict):
@@ -152,10 +158,15 @@ def load_settings(path: str | os.PathLike[str] = 'config/config.toml') -> Settin
             )
         if smsc.fallback == name:
             raise ValueError(f'invalid porth.smsc.{name}.fallback: names itself')
-        if smsc.fallback_after < 1:
-            raise ValueError(
-                f'invalid porth.smsc.{name}.fallback_after: must be at least 1'
-            )
+        for key in (
+            'fallback_after',
+            'reconnect_delay',
+            'enquire_link_interval',
+            'bind_timeout',
+            'response_timeout',
+        ):
+            if getattr(smsc, key) < 1:
+                raise ValueError(f'invalid porth.smsc.{name}.{key}: must be at least 1')
     tokens: dict[str, str] = {}
     for name, http_user in settings.http.users.items():
         key = f'porth.http.users.{name}.token'

@@ -41,6 +41,8 @@ deployment mounts its own `config.toml`, as a secret, and passes its path.
 * an SMSC's `fallback` names no configured SMSC
   (`invalid porth.smsc.op-a.fallback: no SMSC named 'op-c'`) or itself
   (`invalid porth.smsc.op-a.fallback: names itself`), or its `fallback_after` is below 1;
+* an SMSC's `reconnect_delay`, `enquire_link_interval`, `bind_timeout` or `response_timeout`
+  is below 1 (`invalid porth.smsc.op-a.response_timeout: must be at least 1`);
 * the file has no `[porth]` table.
 
 `make config-check` (`bin/porth --check <file>`) runs the same checks on
@@ -155,6 +157,20 @@ settings, `tls` included. See <<Routing>>.
 to `fallback`. Keep it shorter than a message's retry window (`delivery.retry_delay`, with
 its backoff, over `delivery.max_retries`), or a message can use up its attempts before it
 moves. At least `1`.
+| `reconnect_delay` | `10` | Seconds between attempts to reopen a bind that failed or was
+lost. Keep `fallback_after` at least this long. At least `1`. Kannel's `reconnect-delay`.
+| `enquire_link_interval` | `60` | Seconds between the `enquire_link` keepalives sent on an
+open bind. Each `enquire_link_resp` is waited for 10 s. At least `1`. Kannel's
+`enquire-link-interval` (30 s by default there).
+| `bind_timeout` | `30` | Seconds to wait for the SMSC's `bind_*_resp`. smppai ends any wait
+older than `response_timeout` at its next cleanup (every 60 s), so keep `bind_timeout` no
+longer than `response_timeout`. At least `1`.
+| `response_timeout` | `30` | Seconds to wait for any other response, such as a
+`submit_sm_resp`; a `submit_sm` that gets none in time is a failed attempt, retried. It also
+bounds the TCP and TLS connect, and an idle bind is read for
+`max(response_timeout, enquire_link_interval + 10)` seconds before it counts as lost. Below
+`10`, smppai's cleanup can end an `enquire_link_resp` wait early and drop the bind. At
+least `1`. The nearest Kannel setting is `wait-ack`.
 |===
 
 == Kannel users

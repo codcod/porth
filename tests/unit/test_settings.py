@@ -187,11 +187,23 @@ def test_tls_loads_with_or_without_ca_file(tmp_path, ca):
         ('fallback = "x"\n', "porth.smsc.a.fallback: no SMSC named 'x'"),
         ('fallback = "a"\n', 'porth.smsc.a.fallback: names itself'),
         ('fallback_after = 0\n', 'porth.smsc.a.fallback_after: must be at least 1'),
+        ('bind_timeout = 0\n', 'porth.smsc.a.bind_timeout: must be at least 1'),
     ],
 )
-def test_bad_fallback_raises_naming_the_key(tmp_path, extra, error):
+def test_bad_smsc_value_raises_naming_the_key(tmp_path, extra, error):
     with pytest.raises(ValueError, match=re.escape(f'invalid {error}')):
         load(tmp_path, SMSC + extra)
+
+
+def test_smpp_timers_default_to_smppai_and_kannel(tmp_path):
+    smsc = load(tmp_path, SMSC).smsc['a']
+    timers = (
+        smsc.reconnect_delay,
+        smsc.enquire_link_interval,
+        smsc.bind_timeout,
+        smsc.response_timeout,
+    )
+    assert timers == (10, 60, 30, 30)
 
 
 def test_fallback_pair_loads(tmp_path):
