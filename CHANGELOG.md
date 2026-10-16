@@ -52,6 +52,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/metrics` never need a token. The user manual's *HTTP API* and *Configuration* cover it
   (POR-035).
 
+**Changed**
+
+- Logs no longer carry a subscriber's number in clear. An MO's sender, and a Kannel recipient
+  that is dropped, show as their last three digits (`***567`). A failed MO or `dlr-url`
+  request logs the error's class, not its text, which can carry the expanded URL. Database
+  errors no longer print the statement's parameters. An unroutable number's REST `400` now
+  has `details` `no route for the destination number`, without the number (POR-046).
+
 ## [0.3.0] - 2026-10-12
 
 **Added**

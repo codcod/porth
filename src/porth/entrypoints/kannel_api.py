@@ -15,6 +15,7 @@ from smpp.gsm import make_parts
 from sqlalchemy.exc import SQLAlchemyError
 
 from porth import metrics
+from porth.logs import masked
 from porth.config.settings import KannelUser
 from porth.entrypoints import ip_allowed
 from porth.adapters.smpp import choose_data_coding, sms_payload
@@ -276,7 +277,7 @@ def _messages(
         if _TO_CHARS.issuperset(to):
             recipients.append(to)
         else:
-            logger.info(f'Kannel API: dropping recipient {to!r}')
+            logger.info(f'Kannel API: dropping recipient {masked(to)}')
     recipients = list(dict.fromkeys(recipients))
     if not recipients:
         raise _Rejected(
@@ -326,7 +327,7 @@ def _messages(
         try:
             routes[to] = request.app['router'].route(to, smsc)
         except NoRoute as e:
-            logger.info(f'Kannel API: dropping recipient {to!r}: {e}')
+            logger.info(f'Kannel API: dropping recipient {masked(to)}: {e}')
 
     # One internal message per recipient; the credentials were checked above
     return [

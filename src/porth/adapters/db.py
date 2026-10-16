@@ -2,7 +2,6 @@
 
 import typing as tp
 
-import monobase.db
 import sqlalchemy as sa
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -25,10 +24,13 @@ def sqlite_path(dsn: str) -> tp.Optional[str]:
 
 def make_engine(dsn: str) -> AsyncEngine:
     if sqlite_path(dsn) is None:
-        return monobase.db.make_engine(dsn)
+        # hide_parameters: an error's text never carries a message's number or text
+        return create_async_engine(dsn, pool_pre_ping=True, hide_parameters=True)
     # No schemas on SQLite: porth's tables live in the main database
     engine = create_async_engine(
-        dsn, execution_options={'schema_translate_map': {'porth': None}}
+        dsn,
+        hide_parameters=True,
+        execution_options={'schema_translate_map': {'porth': None}},
     )
 
     @event.listens_for(engine.sync_engine, 'connect')

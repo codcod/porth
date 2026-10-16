@@ -109,7 +109,9 @@ JSON object per line, for a log shipper such as Loki, ELK or Datadog, with the k
 (UTC, `2026-10-12T10:39:12.345Z`), `level`, `logger`, `message` (the text line's message),
 `exc` (a traceback, when there is one), and `message_id` and `smsc` on the lines about a
 message or an SMSC. The REST API's access lines add aiohttp's own fields, such as
-`remote_address` and `response_status`.
+`remote_address` and `response_status`. On either format, a subscriber's number shows only
+as its last three digits (`***567`), and no line prints a message's text or a database
+statement's parameters.
 |===
 
 == SMSCs

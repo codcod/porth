@@ -2,7 +2,7 @@ import json
 import logging
 import sys
 
-from porth.logs import JsonFormatter
+from porth.logs import JsonFormatter, masked
 
 logger = logging.getLogger('porth.test')
 
@@ -43,3 +43,7 @@ def test_unserialisable_extra_is_str():
             return 'a thing'
 
     assert json.loads(record(thing=Thing()))['thing'] == 'a thing'
+
+
+def test_masked_keeps_the_last_three_digits():
+    assert masked('+447700900123') == '***123'

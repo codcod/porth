@@ -38,5 +38,5 @@ class Router:
             if name := self.config.prefixes.get(digits[:i]):
                 return name
         if self.config.default is None:
-            raise NoRoute(f'no route for {number!r}')
+            raise NoRoute('no route for the destination number')
         return self.config.default
