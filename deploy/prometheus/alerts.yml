@@ -1,0 +1,62 @@
+# Prometheus alert rules for porth. Add this file under `rule_files:`.
+#
+# - The rules assume porth is scraped as `job_name: porth`.
+# - porth's counters start from zero at every restart, so every rule over a counter uses
+#   rate().
+# - The thresholds are starting points: tune them to your traffic. Keep the backlog
+#   threshold below `delivery.queue_limit` when one is set, since porth refuses submits
+#   there and the backlog never grows past it.
+groups:
+  - name: porth
+    rules:
+      - alert: PorthDown
+        expr: up{job="porth"} == 0 or absent(up{job="porth"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: porth is down
+          description: Prometheus has failed to scrape porth, or has found no porth target, for 2 minutes.
+
+      - alert: PorthSmscUnbound
+        expr: porth_smsc_bound == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: SMSC {{ $labels.smsc }} is unbound
+          description: porth has had no bind to SMSC {{ $labels.smsc }} for 5 minutes, so its messages are not being sent.
+
+      - alert: PorthBacklogGrowing
+        expr: >-
+          porth_messages_waiting + porth_messages_retrying > 1000
+          and deriv((porth_messages_waiting + porth_messages_retrying)[10m:1m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Backlog for SMSC {{ $labels.smsc }} is growing
+          description: Over 1000 messages are waiting or retrying for SMSC {{ $labels.smsc }} and the number has kept rising for 15 minutes.
+
+      - alert: PorthFailedRatioHigh
+        expr: >-
+          sum by (smsc) (rate(porth_messages_final_total{status="failed"}[15m]))
+          / sum by (smsc) (rate(porth_messages_final_total[15m])) > 0.2
+          and sum by (smsc) (rate(porth_messages_final_total[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Many messages to SMSC {{ $labels.smsc }} fail
+          description: Over 20% of the messages reaching a final status on SMSC {{ $labels.smsc }} in the last 15 minutes failed.
+
+      - alert: PorthReceiptsUnmatched
+        expr: >-
+          sum by (smsc) (rate(porth_receipts_total{matched="false"}[30m]))
+          / sum by (smsc) (rate(porth_receipts_total[30m])) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Receipts from SMSC {{ $labels.smsc }} do not match
+          description: Over 5% of the delivery receipts from SMSC {{ $labels.smsc }} in the last 30 minutes matched no message.
