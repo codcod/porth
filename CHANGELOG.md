@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-17
+
+**Fixed**
+
+- The user manual builds again. Two example callback URLs carrying `<secret>`, in *HTTP
+  API* and *Kannel API*, broke the PDF build, so the v0.4.0 release has no manual
+  attached.
+
 ## [0.4.0] - 2026-10-16
 
 **Added**

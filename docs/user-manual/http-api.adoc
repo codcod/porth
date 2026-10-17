@@ -161,7 +161,7 @@ status, so the client need not poll. The body is JSON:
   repeat as a no-op.
 * Calls carry no signature. Since the URL is used as given, a receiver can tell {product}'s
   calls from others by a secret in it, such as
-  `https://app.example/sms/status?token=<secret>`, and check the token itself. A hex
+  `+https://app.example/sms/status?token=<secret>+`, and check the token itself. A hex
   token (`openssl rand -hex 32`) survives percent-normalisation unchanged. {product} stores
   the URL with the message, so anyone who can read its database sees the token. A call that
   goes through is logged by message id only, but a URL {product} can't call at all (a
@@ -229,7 +229,7 @@ a retry:
 [source,json]
 ----
 {
-  "version": "0.4.0",
+  "version": "0.4.1",
   "uptime_seconds": 3600,
   "smsc": {"local": {"bound": true, "waiting": 0, "retrying": 2}}
 }
