@@ -1,8 +1,10 @@
-# Run lint, the unit/e2e and PostgreSQL integration tests, and the user manual check on every
-# pull request and push to main.
+# Run lint, the unit/e2e and PostgreSQL integration tests, and the user manual check and build
+# on every pull request and push to main.
 #
-# The jobs call the Makefile targets, so CI runs what a contributor runs locally. `docs` only
-# validates the manual (`make docs-check`); docs-release.yml builds it for release.
+# The jobs call the Makefile targets, so CI runs what a contributor runs locally. `docs`
+# validates and renders the manual (`make docs-check`, `make docs-build`), so a manual that
+# breaks asciidoctor-pdf fails here and not first at release. docs-release.yml builds it again
+# from the tag and attaches it to the release.
 name: ci
 
 on:
@@ -70,3 +72,4 @@ jobs:
           brew install codcod/tap/snowball
           snowball setup
       - run: make docs-check
+      - run: make docs-build
