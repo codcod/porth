@@ -8,6 +8,7 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy.exc import SQLAlchemyError
 
+from porth import metrics
 from porth.config.settings import HTTPConfig, HTTPUser, RoutingConfig, Settings
 from porth.domain.model import MessageStatus
 from porth.adapters.queue import MessageQueue
@@ -454,6 +455,54 @@ async def test_ready_is_503_while_an_smsc_is_unbound(
     async with TestClient(TestServer(app)) as client:
         resp = await client.get('/ready')
         assert (resp.status, await resp.json()) == (status, body)
+
+
+@pytest.mark.asyncio
+async def test_admin_page_shows_every_smsc_and_counter(http):
+    client, _, _ = http
+    metrics.final.labels('a', 'delivered').inc()
+    delivered = int(sample('porth_messages_final_total', smsc='a', status='delivered'))
+    resp = await client.get('/admin')
+    body = await resp.text()
+    assert resp.status == 200
+    assert resp.headers['Content-Type'].startswith('text/html')
+    assert '<meta http-equiv="refresh" content="10">' in body
+    assert '<td><code>a</code></td>' in body and '<td><code>b</code></td>' in body
+    # a's waiting, retrying, then delivered
+    assert (
+        f'<td class="n">2</td><td class="n">1</td><td class="n">{delivered:,}</td>'
+        in body
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bound_a', [True, False])
+async def test_admin_page_flags_an_unbound_smsc(uow_factory, queues, bound_a):
+    app = create_http_app(
+        queues, ROUTER, uow_factory, Settings(), lambda: smsc_state(bound_a)
+    )
+    async with TestClient(TestServer(app)) as client:
+        body = await (await client.get('/admin')).text()
+    assert ('<strong>a unbound.</strong>' in body) is not bound_a
+    assert ('class="pill bad">unbound<' in body) is not bound_a
+
+
+@pytest.mark.asyncio
+async def test_admin_page_escapes_labels(uow_factory, queues):
+    state = {'<b>x': {'bound': False, 'waiting': 0, 'retrying': 0}}
+    app = create_http_app(queues, ROUTER, uow_factory, Settings(), lambda: state)
+    async with TestClient(TestServer(app)) as client:
+        body = await (await client.get('/admin')).text()
+    assert '&lt;b&gt;x' in body and '<b>x' not in body
+
+
+@pytest.mark.asyncio
+async def test_admin_page_can_be_turned_off(uow_factory, queues):
+    settings = Settings(http=HTTPConfig(admin=False))
+    app = create_http_app(queues, ROUTER, uow_factory, settings, smsc_state)
+    async with TestClient(TestServer(app)) as client:
+        assert (await client.get('/admin')).status == 404
+        assert (await client.get('/status')).status == 200
 
 
 @pytest.mark.asyncio

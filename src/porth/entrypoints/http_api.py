@@ -17,7 +17,7 @@ from porth import metrics
 from porth.config.settings import HTTPUser, Settings
 from porth.domain.exceptions import NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
-from porth.entrypoints import ip_allowed
+from porth.entrypoints import admin, ip_allowed
 from porth.adapters.queue import MessageQueue
 from porth.service_layer.routing import Router
 from porth.service_layer import services
@@ -66,6 +66,8 @@ def create_http_app(
     app.router.add_get('/metrics', metrics_page)
     app.router.add_get('/status', status)
     app.router.add_get('/ready', ready)
+    if settings.http.admin:
+        app.router.add_get('/admin', admin.admin_page)
 
     return app
 

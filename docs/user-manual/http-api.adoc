@@ -17,8 +17,8 @@ names the caller's address, never the token.
 
 * With no users configured, `/api/v1` accepts any caller and {product} logs a warning at
   startup, as the Kannel API does.
-* `/health`, `/ready`, `/status` and `/metrics` need no token, so probes and Prometheus can
-  reach them. Keep them off the public network.
+* `/health`, `/ready`, `/status`, `/metrics` and `/admin` need no token, so probes,
+  Prometheus and a browser can reach them. Keep them off the public network.
 * The caller's address is the TCP peer. `X-Forwarded-For` is never read, so behind a proxy
   `allow_ip` sees the proxy's address.
 
@@ -200,7 +200,7 @@ retention window deletes the record (see <<Lifecycle>>).
 
 == Monitoring
 
-Four endpoints on the HTTP API listener report on {product}. Unlike `/api/v1`, they need no
+Five endpoints on the HTTP API listener report on {product}. Unlike `/api/v1`, they need no
 token (see <<http-authentication>>).
 
 === Health
@@ -234,6 +234,19 @@ a retry:
   "smsc": {"local": {"bound": true, "waiting": 0, "retrying": 2}}
 }
 ----
+
+=== Admin page
+
+`GET /admin` is the same view for a person, in a browser: an HTML page that reloads itself
+every 10 s. It shows the version and uptime, a banner while any SMSC is unbound, and, per
+SMSC, its bind state, what waits and retries, final statuses, retries, mean submit latency,
+SMPP errors by `command_status`, receipts and MO. It needs no Prometheus or Grafana.
+
+Every number is read from memory, as `/status` and `/metrics` read theirs, so counts are
+since {product} started and reset at a restart. The totals at the top also count final
+statuses written at startup for an SMSC that is no longer configured, and the page notes it
+when that happens. It is read-only, needs no token, and is turned off with `http.admin =
+false` (see <<Configuration>>), after which `/admin` answers `404`.
 
 === Metrics
 

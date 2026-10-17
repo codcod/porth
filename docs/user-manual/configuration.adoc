@@ -69,6 +69,7 @@ Keys are given relative to `[porth]`: `http.port` is `port` in `[porth.http]`.
   to 300 s before the window ends, so set it about 5 minutes above the longest receiver
   outage to cover (65 for an hour). A restart starts the window again. A Kannel `dlr-url`
   keeps its 3 attempts.
+| `http.admin` | `true` | Serve the `/admin` status page (see <<Monitoring>>).
 | `kannel.host` | `0.0.0.0` | Address the Kannel-compatible API listens on.
 | `kannel.port` | `13013` | Port the Kannel-compatible API listens on.
 | `kannel.default_sender` | none | Sender for a `sendsms` request without `from`, like Kannel's

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+**Added**
+
+- A read-only HTML status page at `GET /admin`: bind state, backlog and since-start
+  counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off.
+
 ## [0.4.1] - 2026-10-17
 
 **Fixed**

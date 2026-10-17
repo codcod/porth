@@ -33,8 +33,9 @@ The tables below list every difference, and <<Differences from Kannel 1.4.5>> de
   `kannel.conf`. Routing lists become one prefix table (see <<Routing rules>>).
 * SMSCs are SMPP 3.4 only. EMI/UCP, CIMD2, HTTP relays, GSM modems and the other Kannel
   drivers have no equivalent.
-* There is no admin interface. Monitoring moves to `/metrics`, `/status` and `/ready` (see
-  <<Monitoring>>), and links can't be stopped, started or reloaded at runtime.
+* There is no admin interface for control: a read-only `/admin` page shows status, and
+  links can't be stopped, started or reloaded at runtime. Monitoring otherwise moves to
+  `/metrics`, `/status` and `/ready` (see <<Monitoring>>).
 * {product} never accepts SMPP binds, so it can't take the place of opensmppbox.
 * {product}'s listeners have no TLS of their own: terminate it at a reverse proxy (see
   <<tls-proxy>>), a scope decision (see <<Scope>>). <<Limitations>> lists what is not built
@@ -215,8 +216,8 @@ messages waiting to retry; `high` messages up to twice it (see <<Settings>>) | D
 
 | Configuration | `kannel.conf`, with `include` | One TOML file, checked at startup and by
 `--check` (see <<Configuration>>) | Different
-| Status | Admin `status` page (`.txt`, `.html`, `.xml`) | Prometheus `/metrics`, JSON
-`/status`, `/ready` (see <<Monitoring>>) | Different
+| Status | Admin `status` page (`.txt`, `.html`, `.xml`) | HTML `/admin`, Prometheus
+`/metrics`, JSON `/status`, `/ready` (see <<Monitoring>>) | Different
 | Runtime control (`start-smsc`, `stop-smsc`, `restart`, `reload-lists`, `log-level`) | Yes |
 No | Not supported
 | TLS on listeners | Yes | No, terminate TLS at a proxy (see <<tls-proxy>>) | Different
