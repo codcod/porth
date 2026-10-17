@@ -241,7 +241,7 @@ replaced even when it is part of a percent-encoding, so write a literal `%` in `
   so the client can receive the same callback twice (as with Kannel).
 * There is one callback per message, including a long message sent in several parts.
 * Callbacks carry no signature. A receiver can tell {product}'s calls from others by a secret
-  in `dlr-url`, such as `http://app.example/dlr?id=%I&token=<secret>`, and check the token
+  in `dlr-url`, such as `+http://app.example/dlr?id=%I&token=<secret>+`, and check the token
   itself. Keep `%` out of the token, or {product} may read part of it as an escape code. A
   hex token (`openssl rand -hex 32`) has none. {product} stores `dlr-url` with the message, so anyone
   who can read its database sees the token. A call that goes through is logged by message id
