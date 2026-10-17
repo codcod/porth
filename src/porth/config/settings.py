@@ -26,6 +26,7 @@ class HTTPConfig:
     # name (a label for logs) -> its REST caller; none: /api/v1 is open
     users: dict[str, HTTPUser] = dataclasses.field(default_factory=dict)
     callback_retry_minutes: int = 5  # how long a REST status callback is retried
+    admin: bool = True  # False: no /admin page
 
 
 @dataclasses.dataclass(kw_only=True)

@@ -289,8 +289,8 @@ sms.example.com:13443 {
 REST clients then call `https://sms.example.com/api/v1/sms/send`, and Kannel clients
 `https://sms.example.com:13443/cgi-bin/sendsms`.
 
-* Only `/api/v1` is published. `/health`, `/ready`, `/status` and `/metrics` need no token,
-  so probe and scrape them on the host itself or over a private network. With loopback
+* Only `/api/v1` is published. `/health`, `/ready`, `/status`, `/metrics` and `/admin` need no
+  token, so probe and scrape them on the host itself or over a private network. With loopback
   binding, a Prometheus on another host can't reach them.
 * Behind a proxy, `allow_ip` sees only the proxy's address (see <<http-authentication>> and
   <<Authentication>>), and {product}'s logs show that address as the caller's. `allow_ip`

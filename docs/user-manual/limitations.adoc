@@ -13,8 +13,8 @@ The Planned column names the ticket for a planned change, or `—` where none is
 refused by the SMSC rather than by {product}. | —
 | Security | {product}'s listeners speak plain HTTP: put a TLS proxy in front (see
 <<tls-proxy>>). Without one, the Kannel API's credentials and the REST API's Bearer tokens
-travel in clear. An `allow_ip` list is no substitute for a trusted network. The HTTP listener's `/health`, `/metrics`, `/status` and `/ready` endpoints
-need no token: keep the HTTP listener on a trusted network. | —
+travel in clear. An `allow_ip` list is no substitute for a trusted network. The HTTP listener's `/health`, `/metrics`, `/status`, `/ready` and `/admin`
+endpoints need no token: keep the HTTP listener on a trusted network. | —
 | Metrics | Counters start from zero at every restart. A final status whose database
 write rolls back is still counted. | —
 | SMSC routing | Kannel's `unified-prefix` and per-SMSC `allowed-prefix`, `denied-prefix`
