@@ -71,9 +71,44 @@ docker compose -f compose.demo.yaml up -d
   add `--build`; after a new release, run `docker compose -f compose.demo.yaml pull` first.
   If `smsc` exits with `No module named smpp.sim`, the image predates the simulator: do the
   same.
-* The demo publishes 8080 and 2776 on `127.0.0.1` only, since neither is authenticated (its
-  config sets no `http.users`), and
-  no database port. It shares nothing with `compose.yaml`, and `down -v` removes its database.
+* The demo configures no users, on purpose, to keep the walkthrough short: with no
+  `http.users` and no `kannel.users`, both APIs accept any caller, so the `curl` commands
+  need no token. {product} logs a warning about this at startup. To try authentication, see
+  <<Adding users to the demo>>.
+* The demo publishes 8080 and 2776 on `127.0.0.1` only, since neither is authenticated, and
+  no database port. It does not publish the Kannel port (13013). It shares nothing with
+  `compose.yaml`, and `down -v` removes its database.
+
+=== Adding users to the demo
+
+Once a user table exists, its API requires credentials. Add the tables to the `config.toml`
+entry at the end of `compose.demo.yaml`, under the existing settings:
+
+[source,toml]
+----
+[porth.http.users.app]
+token = "demo-token-0123456789"  # at least 16 characters, unique per user
+
+[porth.kannel.users.acme]
+password = "secret"
+----
+
+To call `sendsms` from the host, also add `"127.0.0.1:13013:13013"` to the `porth`
+service's `ports`. Then recreate the container so it reads the new configuration:
+
+[source,bash]
+----
+docker compose -f compose.demo.yaml up -d --force-recreate porth
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-token-0123456789' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+curl -s 'localhost:13013/cgi-bin/sendsms?username=acme&password=secret&from=ACME&to=306900000000&text=hi'
+----
+
+A request to `/api/v1` without the token now gets `401`, and a `sendsms` request without the
+username and password gets `403`. Leave `allow_ip` unset in the demo: requests from the host
+reach the container through Docker's network, so {product} sees the bridge's address rather
+than `127.0.0.1`. <<HTTP users>> and <<Kannel users>> describe every setting.
 
 == Container image
 
