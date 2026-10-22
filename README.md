@@ -218,3 +218,10 @@ The code under `src/porth/` uses the layered layout described in
 
 Tests are grouped into `tests/unit`, `tests/e2e`, `tests/integration`
 (PostgreSQL or SQLite, `RUN_INTEGRATION_TESTS=1`) and `tests/performance/k6`.
+
+## License
+
+Porth is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE).
+Its source code is available at <https://github.com/codcod/porth>. If you run a
+modified porth as a network service, section 13 of the license requires you to
+offer your modified source to its users.
