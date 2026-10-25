@@ -262,7 +262,7 @@ def test_missing_tls_ca_file_raises_at_construction(tmp_path):
 
 
 class FakeInbound:
-    raw = None
+    raw = types.SimpleNamespace(is_bound=False)  # smppai's raw client
 
     async def messages(self):
         return
@@ -686,3 +686,38 @@ async def test_unbound_for_counts_from_the_drop_and_is_zero_while_bound(
         await smpp.send_message(msg('hi'))
     now[0] = 113.0
     assert smpp.unbound_for() == 3.0  # counted from the drop
+
+
+@pytest.mark.asyncio
+async def test_unbound_for_counts_from_a_lost_connection_before_any_reconnect(
+    smpp, monkeypatch
+):
+    now = [100.0]
+    clock = types.SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(client_module, 'time', clock)
+    await smpp.connect()
+
+    lose_connection(FakeSmppai.instances[-1])
+    await smpp._inbound  # the stream ends on its own; no reconnect yet
+    now[0] = 104.0
+    assert smpp.unbound_for() == 4.0
+
+    FakeSmppai.fail_connect = True
+    with pytest.raises(ConnectionError):
+        await smpp.connect()
+    now[0] = 106.0
+    assert smpp.unbound_for() == 6.0  # still counted from the loss
+
+
+@pytest.mark.asyncio
+async def test_unbound_for_counts_from_an_smsc_unbind(smpp, monkeypatch):
+    now = [100.0]
+    clock = types.SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(client_module, 'time', clock)
+    await smpp.connect()
+
+    fake = FakeSmppai.instances[-1]
+    smsc_unbind(fake)
+    fake.on_unbind(fake)  # what smppai's _handle_unbind_request does
+    now[0] = 103.0
+    assert smpp.unbound_for() == 3.0

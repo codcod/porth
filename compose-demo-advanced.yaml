@@ -18,9 +18,9 @@
 #   docker compose -f compose-demo-advanced.yaml logs porth | grep 'MO from'
 #
 #   # Failover: orange-1's messages move to orange-2 once it has been unbound 10 s
-#   # (fallback_after), counted from porth's first reconnect attempt: 10-20 s after the stop
+#   # (fallback_after)
 #   docker compose -f compose-demo-advanced.yaml stop orange-1
-#   sleep 25
+#   sleep 15
 #   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
 #     -d '{"from_number":"ACME","to_number":"306900000000","message":"failover"}'
 #   sleep 3
