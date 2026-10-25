@@ -20,13 +20,13 @@ and EPUB to every GitHub release (build it locally with `make docs-build`).
 
 ## Try it
 
-No carrier needed: `compose.demo.yaml` runs Porth against Smppai's simulator
+No carrier needed: `compose-demo-simple.yaml` runs Porth against Smppai's simulator
 SMSC, which answers every message with a delivery receipt. The steps below
 use `jq`.
 
 ```bash
 git clone https://github.com/codcod/porth.git && cd porth
-docker compose -f compose.demo.yaml up -d
+docker compose -f compose-demo-simple.yaml up -d
 until curl -sf localhost:8080/ready; do sleep 1; done
 
 # Send, then poll: "status": "delivered" a second later
@@ -38,13 +38,19 @@ curl -s localhost:8080/api/v1/sms/status/$id
 
 # An MO from the simulator: porth logs "MO from ***000 dropped: mo.url is not set"
 curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
-docker compose -f compose.demo.yaml logs porth | grep 'MO from'
+docker compose -f compose-demo-simple.yaml logs porth | grep 'MO from'
 
-docker compose -f compose.demo.yaml down -v
+docker compose -f compose-demo-simple.yaml down -v
 ```
 
 The user manual's *Try it without a carrier* covers failed receipts and
 forwarding MOs.
+
+`compose-demo-advanced.yaml` goes further: three simulated SMSCs (`t-mobile`
+for Poland, `orange-1` and `orange-2` for the rest, each other's fallback),
+Prometheus and Grafana with the shipped dashboard, and k6 load over REST and
+Kannel (`make perf-advanced`, `make perf-kannel`). See the manual's *Try the
+advanced demo*.
 
 ## How it works
 

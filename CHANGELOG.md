@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
+- An advanced demo, `compose-demo-advanced.yaml`: three simulator SMSCs (`t-mobile` for
+  Poland, `orange-1` and `orange-2` for the rest, each other's fallback), Prometheus and
+  Grafana running the shipped alert rules and dashboard, and two k6 scripts, `advanced.js`
+  (`make perf-advanced`) and `kannel.js` (`make perf-kannel`). The user manual's *Try the
+  advanced demo* describes it (POR-055).
 - A read-only HTML status page at `GET /admin`: bind state, backlog and since-start
   counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off. New dependency:
   `jinja2` (POR-050).
@@ -18,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Changed**
 
+- `compose.demo.yaml` is now `compose-demo-simple.yaml`, next to the new advanced demo.
+  Its contents are unchanged (POR-055).
 - The Alembic migrations ship inside the porth package (`porth:migrations`), and the
   image no longer has `/opt/porth/migrations`. Without `-x config=`, alembic reads
   `config/config.toml` from the current directory. (POR-047)

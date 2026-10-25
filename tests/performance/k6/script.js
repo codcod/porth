@@ -10,7 +10,7 @@ import { check } from "k6";
 //   BASE_URL=http://localhost:8080 k6 run tests/performance/k6/script.js
 //
 // SEND=1 submits SMS instead, so /admin's counters move. Only against an SMSC
-// that's safe to flood, such as compose.demo.yaml's simulator: every request
+// that's safe to flood, such as compose-demo-simple.yaml's simulator: every request
 // queues a real message.
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";

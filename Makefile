@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-integration-sqlite test-coverage lint format check fmt perf docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
+.PHONY: help install dev-install clean test test-unit test-integration test-integration-sqlite test-coverage lint format check fmt perf perf-advanced perf-kannel docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -102,6 +102,12 @@ run: ## Run the application on config/config.toml
 
 perf: ## Run the k6 check against a running porth (BASE_URL, default localhost:8080)
 	k6 run $(TEST_DIR)/performance/k6/script.js
+
+perf-advanced: ## Run the k6 load through compose-demo-advanced.yaml (all three SMSCs, REST, Kannel, MO)
+	k6 run $(TEST_DIR)/performance/k6/advanced.js
+
+perf-kannel: ## Run the k6 check over the Kannel API (BASE_URL, default localhost:13013)
+	k6 run $(TEST_DIR)/performance/k6/kannel.js
 
 docker-build: ## Build the porth container image
 	docker build -t $(PROJECT_NAME) .
