@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from porth.config.settings import KannelUser
 from porth.domain.model import MessageStatus
+from porth.entrypoints import app_keys
 from porth.entrypoints.kannel_api import KannelAccessLogger, create_kannel_app
 from tests.conftest import sample
 from tests.e2e.test_http_api import ROUTER, RecordingQueue
@@ -27,7 +28,7 @@ def app_for(uow_factory, default_sender=None, users=None):
 async def kannel(uow_factory):
     app = app_for(uow_factory)
     async with TestClient(TestServer(app)) as client:
-        yield client, app['queues']['a']
+        yield client, app[app_keys.QUEUES]['a']
 
 
 @pytest.mark.asyncio
@@ -50,7 +51,7 @@ async def test_sendsms_queues_the_message(kannel):
     message = await queue.get()
     message_id = text.split('Message-ID: ')[1]
     assert message.message_id == message_id
-    stored = client.app['uow_factory'].repo.messages[message_id]
+    stored = client.app[app_keys.UOW_FACTORY].repo.messages[message_id]
     assert stored.status == MessageStatus.QUEUED
     assert queue.committed_at_put == [True]
     assert message.protocol == 'kannel'
@@ -147,7 +148,7 @@ async def test_sendsms_default_sender_fills_only_a_missing_from(
             params['from'] = sender
         resp = await client.get('/cgi-bin/sendsms', params=params)
         assert resp.status == 202
-        assert (await app['queues']['a'].get()).source_addr == expected
+        assert (await app[app_keys.QUEUES]['a'].get()).source_addr == expected
 
 
 @pytest.mark.asyncio
@@ -195,7 +196,7 @@ async def test_full_queue_is_503_and_refuses_every_recipient(kannel, uow_factory
     assert await resp.text() == 'Temporal failure, try again later.'
     assert 'Retry-After' not in resp.headers
     assert len(uow_factory.repo.messages) == 1
-    assert client.app['queues']['b'].empty()
+    assert client.app[app_keys.QUEUES]['b'].empty()
 
 
 @pytest.mark.asyncio
@@ -231,7 +232,7 @@ async def test_unroutable_recipient_is_dropped(kannel, uow_factory):
     assert (message.destination_addr, message.smsc) == ('306900000005', 'a')
     assert id_lines == [f'Message-ID: {message.message_id}']
     assert list(uow_factory.repo.messages) == [message.message_id]
-    assert client.app['queues']['b'].empty()
+    assert client.app[app_keys.QUEUES]['b'].empty()
 
 
 @pytest.mark.asyncio
@@ -248,7 +249,7 @@ async def test_nothing_routable_is_kannels_403(kannel, uow_factory, params):
     resp = await client.get('/cgi-bin/sendsms', params={**PARAMS, **params})
     assert resp.status == 403
     assert await resp.text() == NOT_ROUTABLE
-    assert queue.empty() and client.app['queues']['b'].empty()
+    assert queue.empty() and client.app[app_keys.QUEUES]['b'].empty()
     assert uow_factory.repo.messages == {}
 
 
@@ -262,7 +263,7 @@ async def test_smsc_overrides_the_prefix_and_empty_is_absent(
         '/cgi-bin/sendsms', params={**PARAMS, 'to': '306900000004', 'smsc': smsc}
     )
     assert resp.status == 202
-    message = await client.app['queues'][expected].get()
+    message = await client.app[app_keys.QUEUES][expected].get()
     assert uow_factory.repo.messages[message.message_id].smsc == expected
 
 
@@ -306,7 +307,10 @@ async def test_bad_credentials_are_kannels_403(authed, uow_factory, caplog, para
     resp = await authed.get('/cgi-bin/sendsms', params=params)
     assert resp.status == 403
     assert await resp.text() == AUTH_FAILED
-    assert authed.app['queues']['a'].empty() and authed.app['queues']['b'].empty()
+    assert (
+        authed.app[app_keys.QUEUES]['a'].empty()
+        and authed.app[app_keys.QUEUES]['b'].empty()
+    )
     assert uow_factory.repo.messages == {}
     assert 'wrong' not in caplog.text
 
@@ -356,7 +360,7 @@ UDH = '%05%00%03%A1%02%01'
 async def stored_from(client, resp):
     """The one message an accepted sendsms stored."""
     (line,) = [x for x in (await resp.text()).split('\n') if x.startswith('Message-ID')]
-    return client.app['uow_factory'].repo.messages[line.split(': ')[1]]
+    return client.app[app_keys.UOW_FACTORY].repo.messages[line.split(': ')[1]]
 
 
 @pytest.mark.asyncio

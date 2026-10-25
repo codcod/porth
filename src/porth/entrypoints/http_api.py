@@ -17,7 +17,7 @@ from porth import metrics
 from porth.config.settings import HTTPUser, Settings
 from porth.domain.exceptions import NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
-from porth.entrypoints import admin, ip_allowed
+from porth.entrypoints import admin, app_keys, ip_allowed
 from porth.adapters.queue import MessageQueue
 from porth.service_layer.routing import Router
 from porth.service_layer import services
@@ -43,12 +43,12 @@ def create_http_app(
     app = web.Application()
 
     # Store dependencies in app
-    app['queues'] = queues
-    app['router'] = router
-    app['uow_factory'] = uow_factory
-    app['settings'] = settings
-    app['smsc_state'] = smsc_state
-    app['started'] = time.monotonic()
+    app[app_keys.QUEUES] = queues
+    app[app_keys.ROUTER] = router
+    app[app_keys.UOW_FACTORY] = uow_factory
+    app[app_keys.SETTINGS] = settings
+    app[app_keys.SMSC_STATE] = smsc_state
+    app[app_keys.STARTED] = time.monotonic()
 
     # Add routes
     if not settings.http.users:
@@ -56,7 +56,7 @@ def create_http_app(
             'HTTP API: no porth.http.users configured; /api/v1 accepts any caller'
         )
     api_v1 = web.Application(middlewares=[_bearer_auth(settings.http.users)])
-    api_v1['main_app'] = app  # Reference to main app for message queue access
+    api_v1[app_keys.MAIN_APP] = app  # Reference to main app for message queue access
 
     api_v1.router.add_post('/sms/send', send_sms)
     api_v1.router.add_get('/sms/status/{message_id}', get_sms_status)
@@ -209,15 +209,15 @@ async def send_sms(request: web_request.Request) -> web_response.Response:
     except Exception as e:
         return _rejected(e)
 
-    main_app = request.app['main_app']
+    main_app = request.app[app_keys.MAIN_APP]
     try:
         # Before routing, so a repeat is answered even if the routing has changed
         if idempotency_key and (first := await _by_key(main_app, idempotency_key)):
             return _repeat(first)
-        message.smsc = main_app['router'].route(message.destination_addr)
+        message.smsc = main_app[app_keys.ROUTER].route(message.destination_addr)
         try:
             await services.submit(
-                main_app['uow_factory'], main_app['queues'], [message]
+                main_app[app_keys.UOW_FACTORY], main_app[app_keys.QUEUES], [message]
             )
         except IntegrityError as e:
             # A concurrent submit with the same key committed first (PostgreSQL names
@@ -269,7 +269,7 @@ def _rejected(e: Exception) -> web_response.Response:
 
 async def _by_key(main_app: web.Application, key: str) -> SMSMessage | None:
     # A fresh unit of work: after a failed insert the old transaction is aborted
-    uow_factory: tp.Callable[[], AbstractUnitOfWork] = main_app['uow_factory']
+    uow_factory: tp.Callable[[], AbstractUnitOfWork] = main_app[app_keys.UOW_FACTORY]
     async with uow_factory() as uow:
         return await uow.messages.get_by_idempotency_key(key)
 
@@ -289,7 +289,7 @@ def _repeat(first: SMSMessage) -> web_response.Response:
 async def get_sms_status(request: web_request.Request) -> web_response.Response:
     """Get SMS message status."""
     message_id = request.match_info['message_id']
-    async with request.app['main_app']['uow_factory']() as uow:
+    async with request.app[app_keys.MAIN_APP][app_keys.UOW_FACTORY]() as uow:
         message = await uow.messages.get(message_id)
     if message is None:
         return web.json_response(
@@ -315,7 +315,7 @@ def _ts(dt: tp.Optional[datetime]) -> tp.Optional[str]:
 async def health_check(request: web_request.Request) -> web_response.Response:
     """Health check endpoint."""
 
-    queues = request.app['queues']
+    queues = request.app[app_keys.QUEUES]
 
     health_data = {
         'status': 'healthy',
@@ -338,15 +338,17 @@ async def status(request: web_request.Request) -> web_response.Response:
     return web.json_response(
         {
             'version': importlib.metadata.version('porth'),
-            'uptime_seconds': int(time.monotonic() - request.app['started']),
-            'smsc': request.app['smsc_state'](),
+            'uptime_seconds': int(time.monotonic() - request.app[app_keys.STARTED]),
+            'smsc': request.app[app_keys.SMSC_STATE](),
         }
     )
 
 
 async def ready(request: web_request.Request) -> web_response.Response:
     """200 while every SMSC is bound, else 503 naming the unbound ones."""
-    unbound = [n for n, s in request.app['smsc_state']().items() if not s['bound']]
+    unbound = [
+        n for n, s in request.app[app_keys.SMSC_STATE]().items() if not s['bound']
+    ]
     if unbound:
         return web.json_response({'ready': False, 'unbound': unbound}, status=503)
     return web.json_response({'ready': True})

@@ -17,7 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from porth import metrics
 from porth.logs import masked
 from porth.config.settings import KannelUser
-from porth.entrypoints import ip_allowed
+from porth.entrypoints import app_keys, ip_allowed
 from porth.adapters.smpp import choose_data_coding, sms_payload
 from porth.domain.exceptions import MessageError, NoRoute, QueueError
 from porth.domain.model import MessageStatus, SMSMessage
@@ -55,12 +55,12 @@ def create_kannel_app(
 ) -> web.Application:
     """Create the aiohttp application serving Kannel's /cgi-bin/sendsms."""
     app = web.Application()
-    app['queues'] = queues
-    app['router'] = router
-    app['uow_factory'] = uow_factory
-    app['default_sender'] = default_sender
-    app['users'] = users or {}
-    if not app['users']:
+    app[app_keys.QUEUES] = queues
+    app[app_keys.ROUTER] = router
+    app[app_keys.UOW_FACTORY] = uow_factory
+    app[app_keys.DEFAULT_SENDER] = default_sender
+    app[app_keys.USERS] = users or {}
+    if not app[app_keys.USERS]:
         logger.warning(
             'Kannel API: no porth.kannel.users configured; sendsms accepts any caller'
         )
@@ -147,7 +147,7 @@ def _int(params: tp.Mapping[str, str], *names: str) -> tp.Optional[int]:
 
 def _authorised(request: web.Request, params: tp.Mapping[str, str]) -> bool:
     """smsbox's sendsms-user check; open when no user is configured."""
-    users = request.app['users']
+    users = request.app[app_keys.USERS]
     if not users:
         return True
     username = params.get('username', params.get('user'))
@@ -237,7 +237,7 @@ async def kannel_send_sms(request: web.Request) -> web.Response:
 
     try:
         await services.submit(
-            request.app['uow_factory'], request.app['queues'], messages
+            request.app[app_keys.UOW_FACTORY], request.app[app_keys.QUEUES], messages
         )
     except QueueError as e:
         # All or none, as the store: one full SMSC refuses every recipient
@@ -284,7 +284,7 @@ def _messages(
             400, 'Number(s) has/have been denied by white- and/or black-lists.'
         )
 
-    source_addr = params.get('from') or request.app['default_sender']
+    source_addr = params.get('from') or request.app[app_keys.DEFAULT_SENDER]
     if not source_addr:
         raise _Rejected(400, 'Sender missing and no global set, rejected')
 
@@ -325,7 +325,7 @@ def _messages(
     routes = {}
     for to in recipients:
         try:
-            routes[to] = request.app['router'].route(to, smsc)
+            routes[to] = request.app[app_keys.ROUTER].route(to, smsc)
         except NoRoute as e:
             logger.info(f'Kannel API: dropping recipient {masked(to)}: {e}')
 
