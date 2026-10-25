@@ -1,5 +1,5 @@
 # Porth SMS Gateway - Development Makefile
-.PHONY: help install dev-install clean test test-unit test-integration test-integration-sqlite test-coverage lint format check fmt perf perf-advanced perf-kannel docker-build run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
+.PHONY: help install dev-install clean test test-unit test-integration test-integration-sqlite test-coverage lint format check fmt perf perf-advanced perf-kannel docker-build image-smoke run config-check deps-update deps-lock build docs-check docs-build db-up migrate migration downgrade
 
 # Default target
 .DEFAULT_GOAL := help
@@ -111,6 +111,21 @@ perf-kannel: ## Run the k6 check over the Kannel API (BASE_URL, default localhos
 
 docker-build: ## Build the porth container image
 	docker build -t $(PROJECT_NAME) .
+
+image-smoke: ## Build the image and check it boots on SQLite
+	docker build -t porth:smoke .
+	@docker rm -f porth-smoke >/dev/null 2>&1 || true
+	docker run -d --name porth-smoke -p 18080:8080 \
+		-v $(CURDIR)/tests/fixtures/container.toml:/opt/porth/config/config.toml:ro \
+		--tmpfs /var/lib/porth:uid=65532,mode=0700 porth:smoke
+	@ok=; for i in $$(seq 30); do \
+		curl -fs localhost:18080/health >/dev/null && ok=1 && break; \
+		[ "$$(docker inspect -f '{{.State.Running}}' porth-smoke)" = true ] || break; \
+		sleep 1; \
+	done; \
+	if [ -n "$$ok" ] && curl -fs localhost:18080/ready; then echo; status=0; \
+	else echo "porth-smoke failed; its log:"; docker logs porth-smoke; status=1; fi; \
+	docker rm -f porth-smoke >/dev/null; exit $$status
 
 # Database (the DSN is the `db` setting in $(CONFIG_DIR)/config.toml, read as the
 # gateway reads it)
