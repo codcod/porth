@@ -1,4 +1,4 @@
-"""End-to-end tests of porth's five headline features (POR-031).
+"""End-to-end tests of porth's five headline features (POR-031, POR-053).
 
 Each test starts porth as bin/porth does, from a config file, and drives it only from
 outside: the REST and Kannel APIs, smppai SMSCs on real sockets, callback servers and
@@ -9,6 +9,7 @@ emptied before each test, so no earlier run's unsent message is sent here.
 import asyncio
 import contextlib
 import dataclasses
+import datetime as dt
 import json
 import re
 import time
@@ -20,6 +21,7 @@ import pytest_asyncio
 import sqlalchemy as sa
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from multidict import CIMultiDictProxy
 from prometheus_client.parser import text_string_to_metric_families
 from smpp import NpiType, SMPPServer, TonType
 
@@ -172,9 +174,18 @@ class Porth:
         return f'http://127.0.0.1:{self.http_port}'
 
     async def send(self, **body) -> tuple[int, dict]:
+        status, _, answer = await self.send_raw(**body)
+        return status, answer
+
+    async def send_raw(
+        self, headers=None, **body
+    ) -> tuple[int, CIMultiDictProxy, dict]:
+        """A REST send with these request headers, answering its response headers too."""
         async with aiohttp.ClientSession() as session:
-            async with session.post(f'{self.rest}/api/v1/sms/send', json=body) as r:
-                return r.status, await r.json()
+            async with session.post(
+                f'{self.rest}/api/v1/sms/send', json=body, headers=headers
+            ) as r:
+                return r.status, r.headers, await r.json()
 
     async def status(self, message_id: str) -> str:
         async with aiohttp.ClientSession() as session:
@@ -246,6 +257,16 @@ allow_ip = ["127.0.0.1"]
 
 [porth.kannel.users.remote]
 password = "secret"
+allow_ip = ["10.0.0.0/8"]
+"""
+
+TOKENS = """
+[porth.http.users.app]
+token = "app-token-0123456789"
+allow_ip = ["127.0.0.1"]
+
+[porth.http.users.remote]
+token = "remote-token-0123456789"
 allow_ip = ["10.0.0.0/8"]
 """
 
@@ -426,6 +447,105 @@ async def test_message_the_smsc_rejects_fails_at_once_and_its_dlr_url_gets_16(
     assert [r.query for r in dlr.requests] == [{'d': '16', 'smsc_id': ''}]
 
 
+@pytest.mark.asyncio
+async def test_message_for_an_smsc_that_went_down_goes_out_through_its_fallback(
+    clean, tmp_path
+):
+    a = SMSC('a', extra='fallback = "b"\nfallback_after = 1\nreconnect_delay = 1')
+    b = SMSC('b')
+    delivery = '[porth.delivery]\nretry_delay = 1\nmax_retries = 5\n'
+    porth = Porth(
+        tmp_path, a.toml() + b.toml() + '[porth.routing]\ndefault = "a"\n' + delivery
+    )
+    send = {'source_addr': '1234', 'destination_addr': '306900000001'}
+    async with running(a, b, porth):
+        await until(porth.ready)
+        status, _ = await porth.send(message_text='Before', **send)
+        assert status == 200
+        await until(lambda: a.submits)
+
+        await a.stop()
+        status, body = await porth.send(message_text='After', **send)
+        assert status == 200
+        await until(lambda: b.submits)
+        await until(lambda: _is(porth, body['message_id'], 'sent'))
+
+    assert a.texts() == ['Before']
+    assert b.texts() == ['After']
+
+
+@pytest.mark.asyncio
+async def test_message_whose_validity_passes_while_its_smsc_is_down_expires_unsent(
+    clean, tmp_path
+):
+    smsc, app = SMSC('op', extra='reconnect_delay = 1'), Target()
+    # the second attempt runs 4 s after the first: time to bind the SMSC once validity passes
+    delivery = '[porth.delivery]\nretry_delay = 4\nmax_retries = 5\n'
+    porth = Porth(tmp_path, smsc.toml() + ROUTE_ALL + delivery)
+    async with running(app, porth):
+        retries = await porth.metric('porth_send_retries_total', smsc='op')
+        valid_until = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=1)
+        status, body = await porth.send(
+            source_addr='1234',
+            destination_addr='306900000001',
+            message_text='Too late',
+            valid_until=valid_until.isoformat(),
+            callback_url=app.url('/status'),
+        )
+        assert status == 200
+        message_id = body['message_id']
+
+        async def retried() -> bool:
+            return await porth.metric('porth_send_retries_total', smsc='op') > retries
+
+        await until(retried)  # tried while valid, not expired at once
+        assert await porth.status(message_id) == 'queued'
+
+        wait = (valid_until - dt.datetime.now(dt.UTC)).total_seconds()
+        await asyncio.sleep(max(wait, 0))
+        async with running(smsc):
+            await until(porth.ready)
+            # bound now, with the message still waiting for the retry that finds it expired
+            assert await porth.status(message_id) == 'queued'
+            await until(lambda: _is(porth, message_id, 'expired'))
+            await until(lambda: app.requests)
+            await asyncio.sleep(0.5)  # time enough for a wrongful send
+
+    assert smsc.texts() == []
+    (request,) = app.requests
+    callback = json.loads(request.body)
+    assert (callback['message_id'], callback['status']) == (message_id, 'expired')
+
+
+@pytest.mark.asyncio
+async def test_past_the_queue_limit_both_apis_refuse_with_a_503(clean, tmp_path):
+    smsc = SMSC('op', extra='reconnect_delay = 1')
+    delivery = '[porth.delivery]\nqueue_limit = 2\nworker_count = 1\nmax_retries = 10\n'
+    porth = Porth(tmp_path, smsc.toml() + ROUTE_ALL + delivery)
+    async with running(porth):
+        accepted = []
+        for n in range(5):  # queue_limit + worker_count + 2
+            status, headers, body = await porth.send_raw(
+                source_addr='1234', destination_addr='306900000001', message_text=f'{n}'
+            )
+            if status != 200:
+                break
+            accepted.append(f'{n}')
+        assert (status, headers.get('Retry-After')) == (503, '10')
+        assert 2 <= len(accepted) <= 3  # a worker may hold one mid-attempt
+
+        status, text = await porth.sendsms(
+            params={'from': '1234', 'to': '306900000001', 'text': 'Kannel'}
+        )
+        assert (status, text.strip()) == (503, 'Temporal failure, try again later.')
+
+        async with running(smsc):
+            await until(lambda: len(smsc.submits) == len(accepted), timeout=20)
+            await asyncio.sleep(0.5)  # time enough for a refused message to go out
+
+    assert sorted(smsc.texts()) == accepted
+
+
 # 3. Routing across several SMSCs
 
 
@@ -579,6 +699,37 @@ async def test_high_priority_rest_message_overtakes_waiting_normal_ones(
     assert [t for t in texts if t != 'high'] == normal
 
 
+@pytest.mark.asyncio
+async def test_rest_api_needs_a_users_token_from_an_address_it_allows(clean, tmp_path):
+    smsc = SMSC('op')
+    porth = Porth(tmp_path, smsc.toml() + ROUTE_ALL + TOKENS)
+    send = {
+        'source_addr': '1234',
+        'destination_addr': '306900000001',
+        'message_text': 'Authorized',
+    }
+    async with running(smsc, porth):
+        status, headers, _ = await porth.send_raw(**send)
+        assert status == 401
+        assert headers['WWW-Authenticate'] == 'Bearer realm="porth"'
+        for token in ('wrong-token-0123456789', 'remote-token-0123456789'):
+            auth = {'Authorization': f'Bearer {token}'}
+            status, _, _ = await porth.send_raw(headers=auth, **send)
+            assert status == 401
+
+        auth = {'Authorization': 'Bearer app-token-0123456789'}
+        status, _, _ = await porth.send_raw(headers=auth, **send)
+        assert status == 200
+        await until(lambda: smsc.submits)
+
+        async with aiohttp.ClientSession() as session:
+            for probe in ('/health', '/ready'):
+                async with session.get(f'{porth.rest}{probe}') as r:
+                    assert r.status == 200, probe  # no token
+
+    assert smsc.texts() == ['Authorized']
+
+
 # 5. Two-way and long SMS
 
 
@@ -647,5 +798,12 @@ async def test_long_messages_go_out_in_parts_and_are_delivered_on_every_part(
             await until(lambda: _is(porth, message_id, 'delivered'))
         await until(lambda: len(app.requests) == 2)
         await asyncio.sleep(0.5)  # time enough for a callback per part
+
+    # REST has no coding field: porth chose UCS-2, and the text survives it
+    in_order = sorted(
+        parts[0x08], key=lambda s: s.pdu.get_concatenated_info().part_number
+    )
+    content = (s.pdu.get_message_content() for s in in_order)  # UDH stripped
+    assert b''.join(content).decode('utf-16-be') == ucs2
 
     assert sorted(r.path for r in app.requests) == ['/status/0', '/status/8']

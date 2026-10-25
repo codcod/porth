@@ -36,6 +36,18 @@ the same database. Its `callback_url` gets `delivered` after the receipt.
 | Reliable delivery | `test_message_the_smsc_rejects_fails_at_once_and_its_dlr_url_gets_16`
 | A message the SMSC rejects with a permanent error ends `failed` without a retry. Its
 `dlr-url` is fetched with `%d=16`.
+| Reliable delivery | `test_message_for_an_smsc_that_went_down_goes_out_through_its_fallback`
+| When an SMSC with a `fallback` goes down mid-run and stays unbound for `fallback_after`
+seconds, its next message goes out through the fallback, ends `sent`, and never reaches the
+SMSC that went down.
+| Reliable delivery | `test_message_whose_validity_passes_while_its_smsc_is_down_expires_unsent`
+| A message whose `valid_until` passes while its SMSC is down is retried while still valid,
+then ends `expired` and is never sent, even after the SMSC comes back. Its `callback_url` gets
+`expired`.
+| Reliable delivery | `test_past_the_queue_limit_both_apis_refuse_with_a_503`
+| Once an SMSC's backlog reaches `delivery.queue_limit`, the HTTP API answers `503` with
+`Retry-After: 10`, and the Kannel API answers `503 Temporal failure, try again later.` Every
+accepted message is sent once the SMSC is up, and no refused one is.
 | Routing | `test_each_number_reaches_the_smsc_its_longest_prefix_names`
 | Each number reaches the SMSC of its longest matching prefix, else `routing.default`. A
 Kannel `smsc` overrides the prefixes, and one naming no configured SMSC is refused. Without a
@@ -54,13 +66,20 @@ receives one `POST` with `message_id`, `status`, `occurred_at` and `idempotency_
 | HTTP API | `test_high_priority_rest_message_overtakes_waiting_normal_ones`
 | A `high` message reaches the SMSC ahead of the `normal` messages still waiting in the
 queue, and the `normal` ones keep their order.
+| HTTP API | `test_rest_api_needs_a_users_token_from_an_address_it_allows`
+| With `http.users` configured, a send without a token gets `401` with
+`WWW-Authenticate: Bearer realm="porth"`. A wrong token, and a user's token from outside its
+`allow_ip`, also get `401`. A valid token from an allowed address is sent. `/health` and
+`/ready` need no token.
 | Two-way SMS | `test_mo_reaches_the_application_and_its_reply_reaches_the_subscriber`
 | An MO from the SMSC is fetched from `mo.url` with `%p` and `%a` filled in. The
 application's plain-text answer goes back to the subscriber as an SMS from the number the MO
 was sent to.
 | Long SMS | `test_long_messages_go_out_in_parts_and_are_delivered_on_every_part`
 | A 200-character GSM text and a 100-character UCS-2 text each go out as two concatenated
-parts sharing one reference, with `data_coding` `0` and `8`. A message stays `sent` until
+parts sharing one reference, with `data_coding` `0` and `8`. The HTTP API has no coding
+field, so {product} chose UCS-2 for the Cyrillic text, and its parts join back into that
+text. A message stays `sent` until
 every part has its receipt, then becomes `delivered`, and its `callback_url` is called once.
 |===
 
@@ -86,7 +105,7 @@ TEST_PORTH_DB=postgresql+asyncpg://porth:porth@localhost:5432/porth_test \
 uv run pytest tests/integration/test_features.py -v
 ----
 
-They take about 15 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
+They take about 30 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
 `make test` does not run them.
 
 == What the tests do not prove
