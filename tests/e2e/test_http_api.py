@@ -497,6 +497,23 @@ async def test_admin_page_escapes_labels(uow_factory, queues):
 
 
 @pytest.mark.asyncio
+async def test_admin_page_renders_empty_tables_errors_and_stale_note(
+    uow_factory, queues
+):
+    metrics.final.labels('gone', 'delivered').inc()
+    metrics.smpp_errors.labels('gone', '0x00000058').inc()
+    app = create_http_app(queues, ROUTER, uow_factory, Settings(), lambda: {})
+    async with TestClient(TestServer(app)) as client:
+        body = await (await client.get('/admin')).text()
+    assert body.count('No SMSCs configured.') == 2  # SMSCs and receipts tables
+    assert 'Totals above can include SMSCs no longer configured.' in body
+    assert (
+        '<td><code>gone</code></td><td><span class="pill">0x00000058</span></td>'
+        in body
+    )
+
+
+@pytest.mark.asyncio
 async def test_admin_page_can_be_turned_off(uow_factory, queues):
     settings = Settings(http=HTTPConfig(admin=False))
     app = create_http_app(queues, ROUTER, uow_factory, settings, smsc_state)

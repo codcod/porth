@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="10">
+<title>porth admin</title>
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--text:#1a1d23;--muted:#5b6470;--border:#dfe3e8;--accent:#2f6fed;--pill-bg:#eef1f5;--good:#1d55c4;--good-bg:#e6eefc;--bad:#a92b16;--bad-bg:#fbe9e5}
+@media (prefers-color-scheme: dark){:root{--bg:#14161a;--panel:#1c1f24;--text:#e7e9ec;--muted:#9aa2ad;--border:#2c3038;--accent:#6ea3ff;--pill-bg:#262a31;--good:#9cc0ff;--good-bg:#1f2b42;--bad:#ff8f7a;--bad-bg:#3a231f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:var(--accent)}
+header{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center;justify-content:space-between;padding:.75rem 1.5rem;background:var(--panel);border-bottom:1px solid var(--border)}
+header span,.note{color:var(--muted);font-size:.85rem}
+main{max-width:72rem;margin:0 auto;padding:1.5rem 1rem;display:flex;flex-direction:column;gap:1.25rem}
+h1{margin:0;font-size:1.5rem}h2{margin:0 0 .5rem;font-size:1.05rem}p{margin:0}
+.alert{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:.75rem 1rem;font-size:.9rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:1rem}
+.card,.panel{background:var(--panel);border:1px solid var(--border);border-radius:8px}
+.card{padding:.75rem 1rem}.panel{padding:1rem 1.25rem}
+.label,.sub{color:var(--muted);font-size:.8rem}.value{font-size:1.4rem;font-weight:600;font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));gap:1.25rem}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:.82rem}
+.n{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+.pill{display:inline-block;border-radius:999px;padding:.1rem .6rem;font-size:.8rem;background:var(--pill-bg);color:var(--muted)}
+.pill.good{background:var(--good-bg);color:var(--good);font-weight:600}
+.pill.bad{background:var(--bad-bg);color:var(--bad);font-weight:600}
+</style>
+</head>
+<body>
+<header><strong>porth admin</strong><span>v{{ version }} · up {{ uptime }} · refreshes every 10 s</span></header>
+<main>
+<div><h1>Status</h1><p class="note">Counts since porth started ({{ uptime }} ago): every counter resets at a restart. Waiting and retrying are live.</p></div>
+{% if unbound %}
+<div class="alert" role="status"><strong>{{ unbound }} unbound.</strong> /ready answers 503 until every SMSC is bound.</div>
+{% endif %}
+<div class="cards">
+{% for c in cards %}
+<div class="card"><div class="label">{{ c.label }}</div><div class="value">{{ c.value }}</div><div class="sub">{{ c.sub }}</div></div>
+{% endfor %}
+</div>
+<section class="panel"><h2>SMSCs</h2><div class="scroll"><table>
+<thead><tr><th>SMSC</th><th>State</th><th class="n">Waiting</th><th class="n">Retrying</th><th class="n">Delivered</th><th class="n">Failed</th><th class="n">Expired</th><th class="n">Retries</th><th class="n">Mean submit</th></tr></thead>
+<tbody>
+{% for s in smscs %}
+<tr><td><code>{{ s.name }}</code></td>{% if s.bound %}<td><span class="pill good">bound</span></td>{% else %}<td><span class="pill bad">unbound</span></td>{% endif %}<td class="n">{{ s.waiting }}</td><td class="n">{{ s.retrying }}</td><td class="n">{{ s.delivered }}</td><td class="n">{{ s.failed }}</td><td class="n">{{ s.expired }}</td><td class="n">{{ s.retries }}</td><td class="n">{{ s.mean_submit }}</td></tr>
+{% else %}
+<tr><td class="note" colspan="9">No SMSCs configured.</td></tr>
+{% endfor %}
+</tbody></table></div>{% if stale %}<p class="note">Totals above can include SMSCs no longer configured.</p>{% endif %}</section>
+<div class="two">
+<section class="panel"><h2>SMPP errors</h2><div class="scroll"><table>
+<thead><tr><th>SMSC</th><th>command_status</th><th class="n">Count</th></tr></thead>
+<tbody>
+{% for e in errors %}
+<tr><td><code>{{ e.smsc }}</code></td><td><span class="pill">{{ e.command_status }}</span></td><td class="n">{{ e.count }}</td></tr>
+{% else %}
+<tr><td class="note" colspan="3">None since start.</td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Receipts and MO</h2><div class="scroll"><table>
+<thead><tr><th>SMSC</th><th class="n">Receipts matched</th><th class="n">Unmatched</th><th class="n">MO forwarded</th><th class="n">MO failed</th></tr></thead>
+<tbody>
+{% for r in receipts %}
+<tr><td><code>{{ r.name }}</code></td><td class="n">{{ r.matched }}</td><td class="n">{{ r.unmatched }}</td><td class="n">{{ r.mo_forwarded }}</td><td class="n">{{ r.mo_failed }}</td></tr>
+{% else %}
+<tr><td class="note" colspan="5">No SMSCs configured.</td></tr>
+{% endfor %}
+</tbody></table></div></section>
+</div>
+<p class="note">Machine-readable: <a href="/metrics">/metrics</a> (Prometheus) · <a href="/status">/status</a> · <a href="/ready">/ready</a>. Lifetime totals and history: the Grafana dashboard in <code>deploy/grafana/porth.json</code>.</p>
+</main>
+</body>
+</html>
