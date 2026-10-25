@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off. New dependency:
   `jinja2` (POR-050).
 
+**Changed**
+
+- The Alembic migrations ship inside the porth package (`porth:migrations`), and the
+  image no longer has `/opt/porth/migrations`. Without `-x config=`, alembic reads
+  `config/config.toml` from the current directory. (POR-047)
+
 ## [0.4.1] - 2026-10-17
 
 **Fixed**

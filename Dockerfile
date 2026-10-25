@@ -34,7 +34,6 @@ WORKDIR /opt/porth
 COPY --from=builder /app/.venv/lib/python3.13/site-packages /opt/site-packages
 COPY bin ./bin
 COPY config ./config
-COPY migrations ./migrations
 COPY alembic.ini .
 ENV PYTHONPATH=/opt/site-packages
 
