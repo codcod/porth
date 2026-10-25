@@ -8,6 +8,10 @@ import { check } from "k6";
 // Run against a live instance: `make run` (or bin/porth config/config.toml),
 // then from the repository root:
 //   BASE_URL=http://localhost:8080 k6 run tests/performance/k6/script.js
+//
+// SEND=1 submits SMS instead, so /admin's counters move. Only against an SMSC
+// that's safe to flood, such as compose.demo.yaml's simulator: every request
+// queues a real message.
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
 
@@ -21,6 +25,12 @@ export const options = {
 };
 
 export default function () {
-  const res = http.get(`${BASE_URL}/health`);
+  const res = __ENV.SEND
+    ? http.post(
+        `${BASE_URL}/api/v1/sms/send`,
+        JSON.stringify({ from_number: "ACME", to_number: "306900000000", message: "k6" }),
+        { headers: { "Content-Type": "application/json" } },
+      )
+    : http.get(`${BASE_URL}/health`);
   check(res, { "status is 200": (r) => r.status === 200 });
 }
