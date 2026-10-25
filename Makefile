@@ -57,7 +57,7 @@ test-unit: ## Run unit and e2e tests (no database, no SMSC)
 	@echo "Running unit tests..."
 	$(UV) run pytest $(TEST_DIR)/unit $(TEST_DIR)/e2e -v
 
-test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test database)
+test-integration: ## Run integration tests only (PostgreSQL ones need make db-up; they use their own porth_test and porth_migrations_test databases)
 	@echo "Running integration tests..."
 	RUN_INTEGRATION_TESTS=1 $(UV) run pytest $(TEST_DIR)/integration -v
 
