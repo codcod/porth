@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A read-only HTML status page at `GET /admin`: bind state, backlog and since-start
   counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off. New dependency:
   `jinja2` (POR-050).
+- Four more end-to-end feature tests: failover to a `fallback` SMSC mid-run, REST Bearer
+  tokens with `allow_ip`, `valid_until` expiry while an SMSC is down, and the queue-full
+  `503` on both APIs. The long-message test also checks the UCS-2 text arrives intact. The
+  *Feature tests* chapter says what each proves (POR-053).
 
 **Changed**
 
