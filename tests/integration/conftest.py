@@ -3,7 +3,6 @@ or a SQLite file when TEST_PORTH_DB names one (make test-integration-sqlite)."""
 
 import asyncio
 import os
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -28,9 +27,7 @@ def database() -> str:
         return DSN
     asyncio.run(_create_database(sa.make_url(DSN)))
     config = Config()
-    config.set_main_option(
-        'script_location', str(Path(__file__).parents[2] / 'migrations')
-    )
+    config.set_main_option('script_location', 'porth:migrations')
     config.attributes['dsn'] = DSN
     command.upgrade(config, 'head')
     return DSN

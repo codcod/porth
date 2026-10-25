@@ -73,21 +73,21 @@ test-coverage: ## Run tests with coverage report
 # Code Quality
 lint: ## Run ruff, the ruff format check and ty
 	@echo "Running linter..."
-	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
-	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff check $(SRC_DIR) $(TEST_DIR) bin
+	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin
 	$(UV) run ty check $(SRC_DIR)
 
 format: ## Format code with ruff
 	@echo "Formatting code..."
-	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin
 
 fmt: ## Fix lint findings and format code with ruff
-	$(UV) run ruff check --fix $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
-	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff check --fix $(SRC_DIR) $(TEST_DIR) bin
+	$(UV) run ruff format $(SRC_DIR) $(TEST_DIR) bin
 
 format-check: ## Check code formatting without making changes
 	@echo "Checking code formatting..."
-	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin migrations/env.py
+	$(UV) run ruff format --check $(SRC_DIR) $(TEST_DIR) bin
 
 type-check: ## Run type checking with ty
 	@echo "Running type checks..."

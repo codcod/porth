@@ -1,7 +1,5 @@
 """porth's SQLite schema step, on a throwaway file (no server)."""
 
-from pathlib import Path
-
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
@@ -56,9 +54,7 @@ async def test_a_unit_of_work_that_cannot_begin_gives_its_connection_back(
 
 def test_a_new_alembic_revision_needs_a_sqlite_schema_step():
     config = Config()
-    config.set_main_option(
-        'script_location', str(Path(__file__).parents[2] / 'migrations')
-    )
+    config.set_main_option('script_location', 'porth:migrations')
     assert ScriptDirectory.from_config(config).get_heads() == ['33126464e69d'], (
         'a new revision needs a SQLite upgrade step in porth.adapters.db and a '
         'SQLITE_SCHEMA_VERSION bump'
