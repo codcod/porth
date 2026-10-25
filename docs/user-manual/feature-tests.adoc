@@ -8,7 +8,7 @@ outside:
 * over the HTTP API and the Kannel-compatible API;
 * with test SMSCs that {product} binds to over real SMPP connections;
 * with test servers that receive the `dlr-url`, `callback_url` and `mo.url` requests;
-* by reading `/metrics`.
+* by reading `/metrics`, `/ready`, `/status` and `/admin`.
 
 A test passes only on what a client, an SMSC or an application would see. It never looks
 inside {product} or at its database.
@@ -81,6 +81,19 @@ parts sharing one reference, with `data_coding` `0` and `8`. The HTTP API has no
 field, so {product} chose UCS-2 for the Cyrillic text, and its parts join back into that
 text. A message stays `sent` until
 every part has its receipt, then becomes `delivered`, and its `callback_url` is called once.
+| SMSC link | `test_dead_link_is_noticed_rebound_and_reported_by_ready`
+| A proxy between {product} and the SMSC keeps the connection open but drops every byte.
+`enquire_link` notices the dead link within about 11 seconds, and {product} drops the bind.
+While it is down, `/ready` returns `503` naming the SMSC, `/status` shows it unbound and
+`/admin` shows it down. A message sent then goes out exactly once after the link comes back
+and {product} binds again, and `/ready` returns `200`.
+| SMSC link | `test_unbind_from_the_smsc_mid_session_loses_no_message_or_receipt`
+| When the SMSC sends `unbind` mid-session, {product} binds again. A receipt for a message
+sent before the unbind, arriving after the new bind, marks it `delivered`, and its
+`callback_url` is called once. The next message goes out once.
+| SMSC link | `test_receipt_arrives_over_tls`
+| Over a TLS bind, a message goes out and its receipt marks it `delivered`, both with
+`transceiver = true` and with `transceiver = false`, where it goes out on the transmitter.
 |===
 
 == Running the tests
@@ -105,7 +118,7 @@ TEST_PORTH_DB=postgresql+asyncpg://porth:porth@localhost:5432/porth_test \
 uv run pytest tests/integration/test_features.py -v
 ----
 
-They take about 30 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
+They take about 50 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
 `make test` does not run them.
 
 == What the tests do not prove
