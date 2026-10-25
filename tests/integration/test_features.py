@@ -1,8 +1,8 @@
-"""End-to-end tests of porth's five headline features (POR-031, POR-053).
+"""End-to-end tests of porth's headline features (POR-031, POR-053, POR-052).
 
 Each test starts porth as bin/porth does, from a config file, and drives it only from
-outside: the REST and Kannel APIs, smppai SMSCs on real sockets, callback servers and
-/metrics. Nothing reads porth's objects or its database rows; the database is only
+outside: the REST and Kannel APIs, smppai SMSCs on real sockets, callback servers,
+/metrics, /ready, /status and /admin. Nothing reads porth's objects or its database rows; the database is only
 emptied before each test, so no earlier run's unsent message is sent here.
 """
 
@@ -12,6 +12,7 @@ import dataclasses
 import datetime as dt
 import json
 import re
+import ssl
 import time
 import uuid
 
@@ -32,7 +33,7 @@ from porth.entrypoints.app import build_app
 from tests.integration.conftest import DSN
 from tests.integration.test_repository import pytestmark  # noqa: F401
 from tests.integration.test_restart import until
-from tests.integration.test_smpp_flow import free_port
+from tests.integration.test_smpp_flow import TLS_DIR, free_port
 
 
 @dataclasses.dataclass
@@ -47,23 +48,29 @@ class SMSC:
     """An smppai SMSC recording every submit_sm. It answers each with the id
     <name>-<n>, or refuses it (ESME_RSUBMITFAIL) while reject is set."""
 
-    def __init__(self, name: str, extra: str = '') -> None:
+    def __init__(
+        self, name: str, extra: str = '', tls: ssl.SSLContext | None = None
+    ) -> None:
         self.name = name
         self.port = free_port()
         self.extra = extra  # more keys for its [porth.smsc.<name>] table
+        self.tls = tls
         self.submits: list[Submit] = []
         self.reject = False
         self.server: SMPPServer | None = None
 
     def toml(self) -> str:
+        tls = (
+            f'tls = true\ntls_ca_file = "{TLS_DIR / "cert.pem"}"\n' if self.tls else ''
+        )
         return (
             f'[porth.smsc.{self.name}]\nhost = "127.0.0.1"\nport = {self.port}\n'
-            f'system_id = "porth"\npassword = "pw"\n{self.extra}\n'
+            f'system_id = "porth"\npassword = "pw"\n{tls}{self.extra}\n'
         )
 
     async def start(self) -> None:
         self.server = SMPPServer(
-            host='127.0.0.1', port=self.port, setup_signal_handlers=False
+            host='127.0.0.1', port=self.port, setup_signal_handlers=False, ssl=self.tls
         )
         # A stop waits 30 s + 10 s by default for a bound porth to leave
         self.server.configure_shutdown(grace_period=0.1, reminder_delay=0.1)
@@ -97,6 +104,14 @@ class SMSC:
             esm_class=0x04,
         )
 
+    async def unbind(self) -> None:
+        """Unbind every bound session, as an SMSC may mid-session."""
+        assert self.server is not None
+        # A private smppai API, used as a test double: if an smppai upgrade breaks
+        # it, give smppai a public one
+        for session in self.server.get_bound_clients():
+            await self.server._send_unbind_to_client(session)
+
     async def mo(self, sender: str, to: str, text: str) -> None:
         assert self.server is not None
         assert await self.server.deliver_sm(
@@ -107,6 +122,61 @@ class SMSC:
             destination_addr=to,
             short_message=text,
         )
+
+
+class Link:
+    """A TCP proxy from porth to an SMSC. blackhole() keeps every socket open but
+    drops each byte either way, as a dead link does; restore() passes them again."""
+
+    def __init__(self, smsc: SMSC) -> None:
+        self.smsc = smsc
+        self.port = free_port()
+        self.dead = False
+        self.server: asyncio.Server | None = None
+        self.writers: list[asyncio.StreamWriter] = []
+
+    def toml(self) -> str:
+        """The SMSC's table, pointing porth at the proxy."""
+        return self.smsc.toml().replace(
+            f'port = {self.smsc.port}\n', f'port = {self.port}\n'
+        )
+
+    def blackhole(self) -> None:
+        self.dead = True
+
+    def restore(self) -> None:
+        self.dead = False
+
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(self.accept, '127.0.0.1', self.port)
+
+    async def stop(self) -> None:
+        for writer in self.writers:
+            writer.close()
+        if self.server is not None:
+            self.server.close()
+            await self.server.wait_closed()
+
+    async def accept(self, reader, writer) -> None:
+        try:
+            smsc = await asyncio.open_connection('127.0.0.1', self.smsc.port)
+        except OSError:
+            writer.close()
+            return
+        self.writers += [writer, smsc[1]]
+        await asyncio.gather(self.pipe(reader, smsc[1]), self.pipe(smsc[0], writer))
+
+    async def pipe(self, reader, writer) -> None:
+        """Copy reader to writer, and close writer at its EOF, blackholed or not."""
+        try:
+            while data := await reader.read(65536):
+                if not self.dead:
+                    writer.write(data)
+                    await writer.drain()
+        except ConnectionError:
+            pass
+        finally:
+            writer.close()
 
 
 @dataclasses.dataclass
@@ -191,6 +261,11 @@ class Porth:
         async with aiohttp.ClientSession() as session:
             async with session.get(f'{self.rest}/api/v1/sms/status/{message_id}') as r:
                 return (await r.json())['status']
+
+    async def get(self, path: str) -> tuple[int, str]:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f'{self.rest}{path}') as r:
+                return r.status, await r.text()
 
     async def ready(self) -> bool:
         async with aiohttp.ClientSession() as session:
@@ -807,3 +882,107 @@ async def test_long_messages_go_out_in_parts_and_are_delivered_on_every_part(
     assert b''.join(content).decode('utf-16-be') == ucs2
 
     assert sorted(r.path for r in app.requests) == ['/status/0', '/status/8']
+
+
+# 6. SMSC link failures
+
+TIMERS = 'enquire_link_interval = 1\nresponse_timeout = 1\nreconnect_delay = 1\n'
+
+
+@pytest.mark.asyncio
+async def test_dead_link_is_noticed_rebound_and_reported_by_ready(clean, tmp_path):
+    smsc = SMSC('op', extra=TIMERS + 'bind_timeout = 1')
+    link = Link(smsc)
+    delivery = '[porth.delivery]\nretry_delay = 1\nmax_retries = 30\n'
+    porth = Porth(tmp_path, link.toml() + ROUTE_ALL + delivery)
+    async with running(smsc, link, porth):
+        await until(porth.ready)
+        link.blackhole()
+
+        async def down() -> bool:
+            return not await porth.ready()
+
+        # smppai waits a fixed 10 s for an enquire_link_resp before it drops the bind
+        await until(down, timeout=20)
+        status, body = await porth.get('/ready')
+        assert (status, json.loads(body)) == (503, {'ready': False, 'unbound': ['op']})
+        status, body = await porth.get('/status')
+        assert json.loads(body)['smsc']['op']['bound'] is False
+        status, body = await porth.get('/admin')
+        assert (status, 'op down' in body) == (200, True)
+
+        status, _ = await porth.send(
+            source_addr='1234',
+            destination_addr='306900000001',
+            message_text='Through a dead link',
+        )
+        assert status == 200
+        link.restore()
+        await until(porth.ready)
+        await until(lambda: smsc.submits)
+        await asyncio.sleep(0.5)  # time enough for a wrongful resend
+
+    assert smsc.texts() == ['Through a dead link']
+
+
+@pytest.mark.asyncio
+async def test_unbind_from_the_smsc_mid_session_loses_no_message_or_receipt(
+    clean, tmp_path
+):
+    smsc, app = SMSC('op', extra=TIMERS), Target()
+    porth = Porth(tmp_path, smsc.toml() + ROUTE_ALL)
+    send = {'source_addr': '1234', 'destination_addr': '306900000001'}
+    async with running(smsc, app, porth):
+        status, body = await porth.send(
+            message_text='Before', callback_url=app.url('/status'), **send
+        )
+        assert status == 200
+        message_id = body['message_id']
+        await until(lambda: _is(porth, message_id, 'sent'))
+
+        assert smsc.server is not None
+        before = smsc.server.get_bound_clients()
+        await smsc.unbind()
+        assert smsc.server.get_bound_clients() == []  # nothing yields before this check
+
+        def rebound() -> bool:
+            assert smsc.server is not None
+            return any(s not in before for s in smsc.server.get_bound_clients())
+
+        await until(rebound)
+        await until(porth.ready)
+        await smsc.receipt('op-1')
+        await until(lambda: _is(porth, message_id, 'delivered'))
+        await until(lambda: app.requests)
+
+        status, _ = await porth.send(message_text='After', **send)
+        assert status == 200
+        await until(lambda: len(smsc.submits) == 2)
+        await asyncio.sleep(0.5)  # time enough for a wrongful resend or callback
+
+    assert smsc.texts() == ['Before', 'After']
+    (request,) = app.requests
+    callback = json.loads(request.body)
+    assert (callback['message_id'], callback['status']) == (message_id, 'delivered')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('transceiver', [True, False])
+async def test_receipt_arrives_over_tls(clean, tmp_path, transceiver):
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(TLS_DIR / 'cert.pem', TLS_DIR / 'key.pem')
+    smsc = SMSC('op', extra='' if transceiver else 'transceiver = false', tls=ctx)
+    porth = Porth(tmp_path, smsc.toml() + ROUTE_ALL)
+    async with running(smsc, porth):
+        status, body = await porth.send(
+            source_addr='1234', destination_addr='306900000001', message_text='TLS'
+        )
+        assert status == 200
+        await until(lambda: smsc.submits)
+        await until(porth.ready)  # the receiver binds on its own, maybe after the send
+        await smsc.receipt(smsc.submits[0].smsc_id)
+        await until(lambda: _is(porth, body['message_id'], 'delivered'))
+
+    assert [s.bind for s in smsc.submits] == [
+        'transceiver' if transceiver else 'transmitter'
+    ]

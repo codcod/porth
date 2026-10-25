@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   tokens with `allow_ip`, `valid_until` expiry while an SMSC is down, and the queue-full
   `503` on both APIs. The long-message test also checks the UCS-2 text arrives intact. The
   *Feature tests* chapter says what each proves (POR-053).
+- Three end-to-end tests of SMSC link failures mid-session: a dead link noticed by
+  `enquire_link` and rebound, with `/ready`, `/status` and `/admin` reporting it; an SMSC
+  `unbind` that loses no message or receipt; and receipts over TLS on one bind or two
+  (POR-052).
 
 **Changed**
 
