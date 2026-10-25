@@ -920,11 +920,8 @@ wheels = [
 
 [[package]]
 name = "smppai"
-version = "0.12.1"
-source = { git = "https://github.com/codcod/smppai.git#d4908bc1eaeb1cab373ea2ba4dca3e39130fd507" }
-dependencies = [
-    { name = "typing-extensions" },
-]
+version = "0.12.3"
+source = { git = "https://github.com/codcod/smppai.git#60eee5432382c31a9e60eed381b889000ba6ff45" }
 
 [[package]]
 name = "sqlalchemy"
