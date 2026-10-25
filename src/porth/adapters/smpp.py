@@ -131,9 +131,8 @@ class SMPPClient:
         self._keeper: tp.Optional[asyncio.Task] = None  # the rebind loop
         self._connect_lock = asyncio.Lock()
         # time.monotonic() when the bind went down; None while bound, and before the
-        # first connect(), so a slow startup never counts as unbound.
-        # ponytail: set by _drop(), so a bind smppai lost silently counts from the
-        # next connect(), at most one rebind delay late
+        # first connect(), so a slow startup never counts as unbound. Stamped by the
+        # first of a lost connection, an SMSC unbind, or _drop().
         self.unbound_since: tp.Optional[float] = None
 
     @property
@@ -146,6 +145,11 @@ class SMPPClient:
         if self.connected or self.unbound_since is None:
             return 0.0
         return time.monotonic() - self.unbound_since
+
+    def _mark_unbound(self) -> None:
+        """Start the unbound count, unless an earlier loss already started it."""
+        if self.unbound_since is None:
+            self.unbound_since = time.monotonic()
 
     async def connect(self) -> SmppaiClient:
         """Bind afresh unless already bound; return the bound client. Raises on failure."""
@@ -182,6 +186,8 @@ class SMPPClient:
 
             self._bind = stack
             self.client = inbound.raw
+            # An SMSC-sent unbind leaves the socket open, so _consume never sees it
+            inbound.raw.on_unbind = lambda _raw: self._mark_unbound()
             self.unbound_since = None
             self._inbound = asyncio.create_task(self._consume(inbound))
             self.log.info(
@@ -332,6 +338,7 @@ class SMPPClient:
                 in_flight.add(task)
                 task.add_done_callback(in_flight.discard)
         except Exception as e:
+            self._mark_unbound()  # before the drain: a slow receipt must not delay it
             self.log.warning(f'SMSC {self.label}: SMPP inbound stream ended: {e!r}')
         finally:
             # Acked already: the bind must not let go of one before it is stored
@@ -359,8 +366,7 @@ class SMPPClient:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
         stack, consumer = self._bind, self._inbound
         self._bind = self.client = None
-        if self.unbound_since is None:
-            self.unbound_since = time.monotonic()
+        self._mark_unbound()
         if stack is not None:
             try:
                 await stack.aclose()

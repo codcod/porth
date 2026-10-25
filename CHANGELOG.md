@@ -33,6 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   image no longer has `/opt/porth/migrations`. Without `-x config=`, alembic reads
   `config/config.toml` from the current directory. (POR-047)
 
+**Fixed**
+
+- `fallback_after` now counts from the moment an SMSC's bind is lost, whether the
+  connection drops or the SMSC unbinds. It used to count from porth's next reconnect
+  attempt, so a failover could come up to `reconnect_delay` late (POR-056).
+
 ## [0.4.1] - 2026-10-17
 
 **Fixed**

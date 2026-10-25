@@ -178,9 +178,8 @@ seconds (10), and only while the fallback is bound. A move goes only to the SMSC
 fallback, never past it in one step (see <<SMSCs>>). With both oranges down, nothing moves:
 their messages wait and retry until one comes back.
 
-The clock for `fallback_after` starts at {product}'s first reconnect attempt after the bind
-is lost, which comes up to `reconnect_delay` (10 s) later. Expect a move between 10 and 20
-seconds after an SMSC goes away. The walk-through below waits 25 to be sure.
+The clock for `fallback_after` starts when the bind is lost, so expect a move about 10
+seconds after an SMSC goes away. The walk-through below waits 15.
 
 === How the simulators differ
 
@@ -228,7 +227,7 @@ Stop `orange-1`, wait for the move, and send to a number that routes to it:
 [source,bash]
 ----
 docker compose -f compose-demo-advanced.yaml stop orange-1
-sleep 25
+sleep 15
 curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
   -d '{"from_number":"ACME","to_number":"306900000000","message":"failover"}'
 sleep 3
