@@ -409,6 +409,30 @@ async def test_receipts_reach_on_receipt_and_mo_reaches_on_mo(smpp):
 
 
 @pytest.mark.asyncio
+async def test_receipts_are_stored_concurrently_up_to_the_cap(smpp, monkeypatch):
+    from porth.adapters import smpp as adapter
+
+    monkeypatch.setattr(adapter, '_RECEIPTS_IN_FLIGHT', 2)
+    started, release = [], asyncio.Event()
+
+    async def on_receipt(m):  # a slow database write
+        started.append(m.receipt.id)
+        await release.wait()
+
+    smpp.on_receipt = on_receipt
+    await smpp.connect()
+    fake = FakeSmppai.instances[0]
+    for i in range(3):
+        fake.on_deliver_sm(fake, deliver_sm(f'id:smsc-{i} stat:DELIVRD err:000', 4))
+    await until(lambda: len(started) == 2)
+    await asyncio.sleep(0.02)
+    assert started == ['smsc-0', 'smsc-1']  # the third waits for a slot
+    release.set()
+    await until(lambda: len(started) == 3)
+    await smpp.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_failing_on_mo_is_logged_and_the_loop_goes_on(smpp, caplog):
     mos = []
 

@@ -31,6 +31,10 @@ from porth.domain.model import SMSMessage
 
 logger = logging.getLogger(__name__)
 
+# ponytail: fixed, below the database pool's 15 connections the delivery workers
+# share; a setting if one SMSC's receipt rate outruns it
+_RECEIPTS_IN_FLIGHT = 8
+
 
 def choose_data_coding(text: str) -> tuple[DataCoding, int]:
     """
@@ -299,32 +303,57 @@ class SMPPClient:
         }
 
     async def _consume(self, inbound: Client) -> None:
-        """Hand receipts (parsed by smppai) to on_receipt, awaited, and MO
-        (reassembled by smppai) to on_mo until the bind ends.
+        """Hand receipts (parsed by smppai) to on_receipt, up to
+        _RECEIPTS_IN_FLIGHT at a time, and MO (reassembled by smppai) to on_mo, in
+        order, until the bind ends.
 
         Ends on a lost connection (the loss exception, logged) or once _drop() has
-        closed the bind (after every message still queued).
+        closed the bind (after every message still queued), and only once every
+        receipt in flight is stored.
         """
+        slots = asyncio.Semaphore(_RECEIPTS_IN_FLIGHT)
+        in_flight: set[asyncio.Task] = set()
+
+        async def receipt(msg: Message) -> None:
+            try:
+                await self._handle('delivery receipt', self.on_receipt, msg)
+            finally:
+                slots.release()
+
         try:
             async for msg in inbound.messages():
-                kind, handler = (
-                    ('delivery receipt', self.on_receipt)
-                    if msg.is_receipt
-                    else ('MO', self.on_mo)
-                )
-                if handler is None:
-                    self.log.info(
-                        f'SMSC {self.label}: Inbound {kind} from {masked(msg.sender.addr)} dropped'
-                    )
+                if not msg.is_receipt:
+                    await self._handle('MO', self.on_mo, msg)
                     continue
-                try:
-                    result = handler(msg)
-                    if result is not None:  # on_receipt's: the receipt is stored
-                        await result
-                except Exception:
-                    self.log.exception(f'SMSC {self.label}: Error handling {kind}')
+                # A full house holds the loop, so smppai's queue fills and it
+                # throttles the SMSC instead of porth piling up tasks
+                await slots.acquire()
+                task = asyncio.create_task(receipt(msg))
+                in_flight.add(task)
+                task.add_done_callback(in_flight.discard)
         except Exception as e:
             self.log.warning(f'SMSC {self.label}: SMPP inbound stream ended: {e!r}')
+        finally:
+            # Acked already: the bind must not let go of one before it is stored
+            await asyncio.gather(*in_flight)
+
+    async def _handle(
+        self,
+        kind: str,
+        handler: tp.Optional[tp.Callable[[Message], tp.Any]],
+        msg: Message,
+    ) -> None:
+        if handler is None:
+            self.log.info(
+                f'SMSC {self.label}: Inbound {kind} from {masked(msg.sender.addr)} dropped'
+            )
+            return
+        try:
+            result = handler(msg)
+            if result is not None:  # on_receipt's: the receipt is stored
+                await result
+        except Exception:
+            self.log.exception(f'SMSC {self.label}: Error handling {kind}')
 
     async def _drop(self) -> None:
         """Forget the current bind: close it, then let its consumer drain its receipts."""
