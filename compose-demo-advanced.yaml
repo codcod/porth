@@ -1,0 +1,208 @@
+# porth against three simulated carriers, with Prometheus and Grafana: routing, failover,
+# the Kannel API and monitoring, none of which compose-demo-simple.yaml shows. Every SMSC is
+# smppai's simulator (test-only: any bind, no authentication), and neither API has users,
+# so every port is published on 127.0.0.1 only. Run one demo at a time: both use 8080 and 2776.
+#
+#   docker compose -f compose-demo-advanced.yaml up -d
+#   until curl -sf localhost:8080/ready; do sleep 1; done          # all three SMSCs bound
+#
+#   # Poland (48) goes out via t-mobile, 49 via orange-2, anything else via orange-1
+#   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+#     -d '{"from_number":"ACME","to_number":"48600000000","message":"hello"}'
+#   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+#     -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+#   curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi&smsc=orange-2'
+#
+#   # An MO through each simulator: t-mobile 2776, orange-1 2777, orange-2 2778
+#   curl -s -X POST 'localhost:2777/mo?from=306900000000&to=ACME&text=hi'
+#   docker compose -f compose-demo-advanced.yaml logs porth | grep 'MO from'
+#
+#   # Failover: orange-1's messages move to orange-2 once it has been unbound 10 s
+#   # (fallback_after), counted from porth's first reconnect attempt: 10-20 s after the stop
+#   docker compose -f compose-demo-advanced.yaml stop orange-1
+#   sleep 25
+#   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+#     -d '{"from_number":"ACME","to_number":"306900000000","message":"failover"}'
+#   sleep 3
+#   docker compose -f compose-demo-advanced.yaml logs porth | grep 'moved to SMSC orange-2'
+#   docker compose -f compose-demo-advanced.yaml start orange-1
+#
+#   # Load: make perf-advanced (REST, Kannel, MO, all three SMSCs) and make perf-kannel
+#   # Grafana: localhost:3000 (anonymous viewer; admin/admin) · /admin: localhost:8080/admin
+#   # Prometheus: localhost:9090/targets and localhost:9090/alerts
+#
+#   docker compose -f compose-demo-advanced.yaml down -v
+#
+# The porth image is built or pulled as in compose-demo-simple.yaml (see its header).
+# Prometheus and Grafana load deploy/prometheus/alerts.yml and deploy/grafana/porth.json
+# unchanged.
+
+name: porth-demo-advanced
+
+x-porth: &porth
+  image: ghcr.io/codcod/porth:latest
+  configs:
+    - source: config.toml
+      target: /opt/porth/config/config.toml
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: porth
+      POSTGRES_PASSWORD: porth
+      POSTGRES_DB: porth
+    volumes: [postgres-data:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porth -d porth"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  migrate:
+    <<: *porth
+    command: ["-m", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # Each simulator's service name is its porth.smsc name, so `stop orange-1` stops "orange-1"
+  t-mobile:
+    <<: *porth
+    command: ["-m", "smpp.sim", "--host", "0.0.0.0", "--receipt-delay", "0.5"]
+    ports: ["127.0.0.1:2776:2776"]
+
+  orange-1:
+    <<: *porth
+    command: ["-m", "smpp.sim", "--host", "0.0.0.0", "--receipt-delay", "1",
+              "--stat", "DELIVRD:9", "--stat", "UNDELIV:1"]
+    ports: ["127.0.0.1:2777:2776"]
+
+  orange-2:
+    <<: *porth
+    command: ["-m", "smpp.sim", "--host", "0.0.0.0", "--receipt-delay", "2",
+              "--stat", "DELIVRD:19", "--stat", "EXPIRED:1"]
+    ports: ["127.0.0.1:2778:2776"]
+
+  porth:
+    <<: *porth
+    # build: here alone, so up builds the image once; the others reuse the tag
+    build: .
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      t-mobile: {condition: service_started}
+      orange-1: {condition: service_started}
+      orange-2: {condition: service_started}
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:8080", "127.0.0.1:13013:13013"]
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    configs:
+      - source: prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+      - source: alerts.yml
+        target: /etc/prometheus/alerts.yml
+    volumes: [prometheus-data:/prometheus]
+    ports: ["127.0.0.1:9090:9090"]
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      # Anonymous viewing: acceptable only because the port is on 127.0.0.1
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/porth.json
+    configs:
+      - source: grafana-datasource.yml
+        target: /etc/grafana/provisioning/datasources/prometheus.yml
+      - source: grafana-dashboards.yml
+        target: /etc/grafana/provisioning/dashboards/porth.yml
+      - source: porth.json
+        target: /var/lib/grafana/dashboards/porth.json
+    volumes: [grafana-data:/var/lib/grafana]
+    depends_on: [prometheus]
+    ports: ["127.0.0.1:3000:3000"]
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+
+configs:
+  alerts.yml:
+    file: ./deploy/prometheus/alerts.yml
+  porth.json:
+    file: ./deploy/grafana/porth.json
+
+  prometheus.yml:
+    content: |
+      global:
+        scrape_interval: 5s
+        evaluation_interval: 5s
+      rule_files: [/etc/prometheus/alerts.yml]
+      scrape_configs:
+        - job_name: porth  # the name alerts.yml assumes
+          static_configs:
+            - targets: ["porth:8080"]
+
+  grafana-datasource.yml:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+
+  grafana-dashboards.yml:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: porth
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards
+
+  config.toml:
+    content: |
+      [porth]
+      db = "postgresql+asyncpg://porth:porth@postgres:5432/porth"
+      log_level = "INFO"
+
+      [porth.kannel]
+      host = "0.0.0.0"
+      port = 13013
+
+      # No url: an MO is logged ("MO from ... dropped") instead of forwarded.
+
+      # Each SMSC hands its messages to its fallback once unbound fallback_after (10) s,
+      # only while the fallback is bound.
+      [porth.smsc.t-mobile]
+      host = "t-mobile"
+      port = 2775
+      system_id = "porth"
+      password = "demo"
+      throughput = 10  # below advanced.js's rate to Poland, so its backlog shows
+      fallback = "orange-1"
+
+      [porth.smsc.orange-1]
+      host = "orange-1"
+      port = 2775
+      system_id = "porth"
+      password = "demo"
+      fallback = "orange-2"
+
+      [porth.smsc.orange-2]
+      host = "orange-2"
+      port = 2775
+      system_id = "porth"
+      password = "demo"
+      fallback = "orange-1"
+
+      [porth.routing]
+      default = "orange-1"
+
+      [porth.routing.prefixes]
+      "48" = "t-mobile"  # Poland
+      "49" = "orange-2"
