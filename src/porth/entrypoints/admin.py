@@ -8,6 +8,7 @@ import jinja2
 from aiohttp import web, web_request, web_response
 
 from porth import metrics
+from porth.entrypoints import app_keys
 
 # templates/admin.html is the approved mockup (development/porth/mockups/admin-status.html)
 # with its sample values replaced by template fields. Loaded at import, so a missing file
@@ -43,8 +44,8 @@ def _n(value: float) -> str:
 
 async def admin_page(request: web_request.Request) -> web_response.Response:
     """Version, uptime, per-SMSC state and since-start counters, as HTML."""
-    state: dict[str, dict[str, tp.Any]] = request.app['smsc_state']()
-    uptime = _uptime(int(time.monotonic() - request.app['started']))
+    state: dict[str, dict[str, tp.Any]] = request.app[app_keys.SMSC_STATE]()
+    uptime = _uptime(int(time.monotonic() - request.app[app_keys.STARTED]))
     submitted = _read(metrics.submitted, '_total', 'protocol')
     final = _read(metrics.final, '_total', 'smsc', 'status')
     retries = _read(metrics.retries, '_total', 'smsc')

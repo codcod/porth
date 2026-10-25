@@ -106,7 +106,7 @@ async def forward(
     store), queue being a's."""
     app = App(response or web.Response(text='Thanks'))
     web_app = web.Application()
-    web_app.router.add_get('/mo', app)
+    web_app.router.add_get('/mo', app.__call__)
     server = TestServer(web_app)
     await server.start_server()
     queues, uow_factory = {'a': MessageQueue(), 'b': MessageQueue()}, FakeUowFactory()
