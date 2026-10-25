@@ -121,6 +121,11 @@ uv run pytest tests/integration/test_features.py -v
 They take about 50 seconds. Without `RUN_INTEGRATION_TESTS=1` they are skipped, so a plain
 `make test` does not run them.
 
+`tests/integration/test_process.py` runs the real `bin/porth`: it stops it with SIGTERM while
+messages are queued, starts it again, and checks each message goes out once and every log
+line is JSON. `make image-smoke` builds the container image and checks it boots on SQLite; it
+needs Docker.
+
 == What the tests do not prove
 
 * **Throughput under load.** The tests send a handful of messages. The k6 scripts in

@@ -1,0 +1,12 @@
+# The config `make image-smoke` mounts into the image: SQLite on the tmpfs it gives
+# /var/lib/porth, and no SMSC, so /ready answers 200.
+[porth]
+db = "sqlite+aiosqlite:////var/lib/porth/porth.db"
+
+[porth.http]
+host = "0.0.0.0"
+port = 8080
+
+[porth.kannel]
+host = "0.0.0.0"
+port = 13013
