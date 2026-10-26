@@ -294,7 +294,7 @@ use the dashboard, import `deploy/grafana/porth.json` into Grafana and pick your
 data source. Its `SMSC` variable filters the per-SMSC panels. For the alerts, add
 `deploy/prometheus/alerts.yml` under `rule_files:`. The rules assume the `porth` job above,
 and every rule over a counter uses `rate()`, because counters start from zero at every
-restart. <<Try the advanced demo>> runs both files, ready-made, against three simulated
+restart. <<The advanced demo>> runs both files, ready-made, against three simulated
 SMSCs.
 
 [cols="1,1,3",options="header"]

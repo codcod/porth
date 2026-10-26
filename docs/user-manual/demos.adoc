@@ -1,0 +1,376 @@
+= Demos
+
+The repository root holds Docker Compose files that run {product} without a carrier. Each one
+has a goal of its own, and a k6 script in `tests/performance/k6` that puts it under load. Every
+file's header comment lists the same commands as this chapter.
+
+[cols="2,3,2,2",options="header"]
+|===
+| Demo | Goal | Start it with | Load
+
+| <<The basic demo>>
+| Send a first SMS over REST and Kannel, see its receipt, receive an MO
+| `docker compose -f compose-demo.yaml up -d`
+| `make perf-demo`
+
+| <<The auth demo>>
+| See both APIs refuse callers without credentials, and accept them with
+| `docker compose -f compose-demo.yaml -f compose-demo-auth.yaml up -d`
+| `make perf-demo-auth`
+
+| <<The advanced demo>>
+| Routing to three SMSCs, failover between them, Prometheus and Grafana
+| `docker compose -f compose-demo-advanced.yaml up -d`
+| `make perf-demo-advanced`
+
+| <<The reference Kannel>>
+| Compare {product}'s Kannel API with a real Kannel
+| `docker compose -f compose-kannel.yaml up -d --build`
+| none
+|===
+
+`compose.yaml` is not a demo: it is the development PostgreSQL that `make db-up` starts (see
+<<Install>>). `make perf` runs `tests/performance/k6/health.js`, a `/health` latency check
+that works against any running {product}, demo or not.
+
+What the demos share:
+
+* *The SMSCs are simulators.* smppai's simulator (`python -m smpp.sim`) answers every
+  message with a delivery receipt and can send {product} an MO. It accepts any bind and has
+  no authentication, so it is a test tool only. Every k6 script queues real messages: run them
+  only against these simulators.
+* *Ports are local.* Every port is published on `127.0.0.1` only, and no database port is.
+* *One demo at a time.* The {product} demos all publish 8080, 13013 and 2776. The reference
+  Kannel uses 13000 and 14013, so it can run next to one of them.
+* *The image.* The demos use `ghcr.io/codcod/porth:latest`, or build it from the clone when
+  it cannot be pulled. Until a release publishes that image, `up` prints a pull error
+  (`denied`) and then builds: that is expected. Once an image is local, `up` keeps using it:
+  after a `git pull`, add `--build`; after a new release, run `docker compose -f
+  compose-demo.yaml pull` first. If a simulator exits with `No module named smpp.sim`, the
+  image predates the simulator: do the same.
+* *Clean up with `down -v`.* It removes the demo's containers and its database (and, for the
+  advanced demo, the Prometheus and Grafana data). No demo shares anything with
+  `compose.yaml`.
+* *Changing a demo.* Its {product} configuration is the `config.toml` entry at the end of the
+  file. After an edit, recreate {product} so it reads it:
+  `docker compose -f <file> up -d --force-recreate porth`. Compose does not notice a changed
+  config on its own.
+
+== The basic demo
+
+*Goal:* the shortest path from a clone to a delivered SMS. `compose-demo.yaml` runs
+{product} with its own PostgreSQL and one simulator SMSC, `sim`. Neither API has users, so
+the `curl` commands need no credentials; {product} logs a warning about this at startup.
+
+[cols="2,4,2",options="header"]
+|===
+| Service | Role | Host port
+
+| `porth` | The gateway | 8080 (REST), 13013 (Kannel)
+| `postgres`, `migrate` | The message store, and a one-off schema migration | none
+| `smsc` | The simulator SMSC, `sim` in {product}'s configuration; its `/mo` endpoint | 2776
+|===
+
+=== Run it
+
+[source,bash]
+----
+docker compose -f compose-demo.yaml up -d
+until curl -sf localhost:8080/ready; do sleep 1; done
+
+# Send over REST, then poll: "status": "delivered" a second later
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+curl -s localhost:8080/api/v1/sms/status/<message_id>
+
+# Send over Kannel's sendsms: "0: Accepted for delivery"
+curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi'
+
+# An MO from the simulator: porth logs "MO from ***000 dropped: mo.url is not set"
+curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
+docker compose -f compose-demo.yaml logs porth | grep 'MO from'
+
+docker compose -f compose-demo.yaml down -v
+----
+
+=== Variations
+
+* *Failed receipts.* By default every receipt says `DELIVRD`, one second after the submit.
+  Add `--stat DELIVRD:9 --stat UNDELIV:1` to the `smsc` service's command, and about one
+  message in ten, at random, comes back `failed`.
+* *Forwarding MOs.* The demo sets no `mo.url`, so {product} logs each MO instead of
+  forwarding it. To forward MOs to an application, set `[porth.mo] url` in the `config.toml`
+  entry (see <<Configuration>>).
+
+=== Load
+
+`make perf-demo` runs `tests/performance/k6/demo.js`: 5 virtual users for 15 seconds, each
+iteration one REST send and one `sendsms`. It fails on more than 1% failed requests or a p95
+latency over 100 ms. `POST=1 make perf-demo` sends Kannel's POST form instead: the text as the
+body, the parameters as `X-Kannel-*` headers.
+
+== The auth demo
+
+*Goal:* see what changes once the APIs have users. `compose-demo-auth.yaml` is an overlay on
+the basic demo, not a demo of its own: given as a second `-f`, it replaces the basic demo's
+`config.toml` with one that adds a REST caller and a `sendsms` user. Everything else, the
+services and the ports, is the basic demo's.
+
+[cols="1,2,2",options="header"]
+|===
+| API | User | Credentials
+
+| REST (`/api/v1`) | `[porth.http.users.app]` | `Authorization: Bearer demo-token-0123456789abcdef`
+| Kannel (`sendsms`) | `[porth.kannel.users.acme]` | `username=acme&password=demo-secret`
+|===
+
+Once a user table exists, its API refuses a caller without credentials: `/api/v1` answers
+`401` and `sendsms` answers `403` "Authorization failed for sendsms". `/health`, `/ready`,
+`/status`, `/metrics` and `/admin` stay open, with or without users.
+
+=== Run it
+
+[source,bash]
+----
+docker compose -f compose-demo.yaml -f compose-demo-auth.yaml up -d
+until curl -sf localhost:8080/ready; do sleep 1; done
+
+# REST: no token is a 401, the token is accepted
+curl -si -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-token-0123456789abcdef' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+
+# Kannel: no password is a 403, the right one is accepted
+curl -si 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi'
+curl -s 'localhost:13013/cgi-bin/sendsms?username=acme&password=demo-secret&from=ACME&to=306900000000&text=hi'
+
+# Each refusal logs the caller's address, never the token or password
+docker compose -f compose-demo.yaml logs porth | grep 'authorization failed'
+
+docker compose -f compose-demo.yaml down -v
+----
+
+To add the users to a basic demo that is already running, or to take them away again, add
+`--force-recreate porth` to `up`: without it, Compose keeps the running container and its
+old configuration.
+
+=== Notes
+
+* *The overlay repeats the basic demo's settings.* Compose replaces a config entry whole
+  rather than merging it, so the overlay's `config.toml` carries the database, SMSC and
+  routing settings too. A change to them goes in both files.
+* *`allow_ip` is left out.* A request from the host reaches the container through Docker's
+  network, so {product} sees the bridge's address (logged as, for example, `172.20.0.1`)
+  rather than `127.0.0.1`. A list of `127.0.0.1` would refuse every request.
+* <<HTTP users>> and <<Kannel users>> describe every setting.
+
+=== Load
+
+`make perf-demo-auth` runs `demo.js` with `AUTH=1`: each iteration sends over REST with the
+token and over `sendsms` with the password, then one of each without credentials, which must
+be refused with `401` and `403`. The refusals are expected responses, so they do not count
+toward the 1% failure threshold, and the run measures how quickly {product} turns a caller away
+as well as how quickly it accepts one. `TOKEN`, `KANNEL_USER` and `KANNEL_PASSWORD` override
+the demo's credentials, and `POST=1` works as in the basic demo, with the credentials as
+`X-Kannel-Username` and `X-Kannel-Password`. `make perf-demo` against the auth demo fails:
+it sends no credentials.
+
+== The advanced demo
+
+*Goal:* see {product} the way a production deployment uses it. `compose-demo-advanced.yaml`
+routes to three SMSCs, fails over between them, and is watched by Prometheus and Grafana with
+the shipped alert rules and dashboard. The three SMSCs are simulators, as in the basic demo,
+so this is still a test setup. Neither API has users, so run it on a workstation, not on a
+shared host.
+
+=== What runs
+
+[mermaid]
+....
+flowchart LR
+    Client["curl / k6"]
+    subgraph porth-demo-advanced
+        Porth["porth<br/>REST :8080 · Kannel :13013"]
+        PG[("postgres")]
+        TM["smsc-t-mobile<br/>simulator"]
+        O1["smsc-orange-1<br/>simulator"]
+        O2["smsc-orange-2<br/>simulator"]
+        Prom["Prometheus :9090"]
+        Graf["Grafana :3000"]
+    end
+    Client --> Porth
+    Client -- "POST /mo" --> TM & O1 & O2
+    Porth --> PG
+    Porth -- SMPP --> TM & O1 & O2
+    Prom -- "scrapes /metrics" --> Porth
+    Graf -- queries --> Prom
+....
+
+[cols="2,4,2",options="header"]
+|===
+| Service | Role | Host port
+
+| `porth` | The gateway, on the demo's `config.toml` (the `configs:` entry at the end of the
+file) | 8080 (REST), 13013 (Kannel)
+| `postgres`, `migrate` | The message store, and a one-off schema migration | none
+| `smsc-t-mobile` | Simulator SMSC; its `/mo` endpoint | 2776
+| `smsc-orange-1` | Simulator SMSC; its `/mo` endpoint | 2777
+| `smsc-orange-2` | Simulator SMSC; its `/mo` endpoint | 2778
+| `prometheus` | Scrapes {product} every 5 s and evaluates the shipped alert rules | 9090
+| `grafana` | The shipped dashboard, open to anonymous viewers | 3000
+|===
+
+Each simulator's service name is also its SMSC name in {product}, so `/admin`, the
+`smsc` label in the metrics, Grafana, and `docker compose stop smsc-orange-1` all use the same
+name.
+
+=== How it routes
+
+[cols="1,1,1",options="header"]
+|===
+| Destination | SMSC | Fallback
+
+| `48…` (Poland) | `smsc-t-mobile` | `smsc-orange-1`
+| `49…` | `smsc-orange-2` | `smsc-orange-1`
+| anything else (`routing.default`) | `smsc-orange-1` | `smsc-orange-2`
+|===
+
+"Via smsc-orange-1 or smsc-orange-2" is a prefix split plus failover. {product} sends each number
+through one SMSC and does not load-balance across several (see <<Routing and SMSC links>>).
+So `49` goes to smsc-orange-2 to give it traffic of its own, and each SMSC names a `fallback`.
+A message moves to the fallback once its own SMSC has been unbound for `fallback_after`
+seconds (10), and only while the fallback is bound. A move goes only to the SMSC's own
+fallback, never past it in one step (see <<SMSCs>>). With both oranges down, nothing moves:
+their messages wait and retry until one comes back.
+
+The clock for `fallback_after` starts when the bind is lost, so expect a move about 10
+seconds after an SMSC goes away. The walk-through below waits 15.
+
+=== How the simulators differ
+
+The differences are deliberate, so each SMSC's dashboard panels look different:
+
+* `smsc-t-mobile` sends every receipt after 0.5 s, all `DELIVRD`. {product} limits it to
+  `throughput = 10` messages a second, below the rate `make perf-demo-advanced` sends to Poland,
+  so its queue (`porth_messages_waiting`) climbs during a run and drains afterwards.
+* `smsc-orange-1` answers after 1 s, and about one message in ten comes back `UNDELIV`
+  (`failed`).
+* `smsc-orange-2` answers after 2 s, and about one in twenty comes back `EXPIRED`.
+
+=== Walk-through
+
+The file's header comment has the same commands.
+
+[source,bash]
+----
+docker compose -f compose-demo-advanced.yaml up -d
+until curl -sf localhost:8080/ready; do sleep 1; done      # all three SMSCs bound
+
+# Poland via smsc-t-mobile, Greece via smsc-orange-1 (the default)
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"48600000000","message":"hello"}'
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
+
+# Kannel sendsms, forcing smsc-orange-2 with smsc=
+curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi&smsc=smsc-orange-2'
+
+# An MO through each simulator (2776 smsc-t-mobile, 2777 smsc-orange-1, 2778 smsc-orange-2)
+curl -s -X POST 'localhost:2777/mo?from=306900000000&to=ACME&text=hi'
+docker compose -f compose-demo-advanced.yaml logs porth | grep 'MO from'
+
+docker compose -f compose-demo-advanced.yaml down -v
+----
+
+As in the basic demo, there is no `mo.url`, so {product} logs each MO instead of
+forwarding it.
+
+=== Failover
+
+Stop `smsc-orange-1`, wait for the move, and send to a number that routes to it:
+
+[source,bash]
+----
+docker compose -f compose-demo-advanced.yaml stop smsc-orange-1
+sleep 15
+curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
+  -d '{"from_number":"ACME","to_number":"306900000000","message":"failover"}'
+sleep 3
+docker compose -f compose-demo-advanced.yaml logs porth | grep 'moved to SMSC smsc-orange-2'
+docker compose -f compose-demo-advanced.yaml start smsc-orange-1
+----
+
+Grep for `moved to SMSC`, not `sent through SMSC smsc-orange-2`: smsc-orange-2 carries `49` traffic
+anyway. While `smsc-orange-1` is stopped, `localhost:8080/admin` shows it unbound and `/ready`
+answers `503`. In Grafana, `porth_smsc_bound` drops to 0 for it. After `start`, it rebinds
+within `reconnect_delay`.
+
+=== Monitoring
+
+* Grafana, at `localhost:3000`, opens on the porth dashboard without a login (anonymous
+  viewer). Its SMSC picker lists all three SMSCs. The image's default admin login,
+  `admin`/`admin`, also works. An admin can add data sources, including one that reaches the
+  demo's PostgreSQL, so this is another reason to keep the ports local.
+* Prometheus, at `localhost:9090/targets` and `localhost:9090/alerts`, scrapes {product} as
+  `job_name: porth` and loads the alert rules.
+
+Both use `deploy/prometheus/alerts.yml` and `deploy/grafana/porth.json` as they are, so what
+the demo shows is what a production install of them gets (see <<Metrics>>). The alerts have
+their own `for:` windows. `PorthSmscUnbound`, for example, fires only after an SMSC has been
+unbound for 5 minutes. There is no Alertmanager: firing alerts show on `/alerts` only.
+
+=== Load
+
+`make perf-demo-advanced` runs `tests/performance/k6/demo-advanced.js` for 30 seconds:
+
+* REST sends at 30 a second, half to Poland;
+* sends followed by a status poll;
+* Kannel `sendsms` with `smsc=smsc-orange-2`;
+* an MO through each simulator every second;
+* `/health`.
+
+It fails when any SMSC reached no final status during the run, which means routing sent it
+nothing, as well as on errors and latency.
+
+=== Notes
+
+* Ports 3000 and 9090 clash with a Grafana or Prometheus already running on the host.
+* The demo has no users. To add them, add the tables from `compose-demo-auth.yaml` to this
+  file's `config.toml` and recreate {product}; `demo-advanced.js` sends no credentials, so it
+  then fails.
+
+== The reference Kannel
+
+*Goal:* compare {product}'s Kannel API with the real thing, request by request.
+`compose-kannel.yaml` runs a Kannel bearerbox and smsbox, from Debian's `kannel` package,
+bound over SMPP to a plain smppai SMSC. It has no {product} in it: run one of the {product}
+demos next to it and send the same request to both.
+
+[cols="2,4,2",options="header"]
+|===
+| Service | Role | Host port
+
+| `smsbox` | Kannel's `sendsms`, with the user `tester`/`foobar` | 14013
+| `bearerbox` | Kannel's core and its admin HTTP interface (password `admin`) | 13000
+| `smppai` | An smppai SMSC that accepts any bind | none
+|===
+
+=== Run it
+
+[source,bash]
+----
+docker compose -f compose-kannel.yaml up -d --build
+docker compose -f compose-demo.yaml up -d
+
+# The same sendsms, to Kannel and to porth
+curl -s 'localhost:14013/cgi-bin/sendsms?username=tester&password=foobar&from=ACME&to=306900000000&text=hi'
+curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi'
+
+docker compose -f compose-kannel.yaml down
+docker compose -f compose-demo.yaml down -v
+----
+
+The first `up` builds the Kannel and smppai images, which takes a minute. <<porth and Kannel>>
+lists the differences to look for.
