@@ -46,11 +46,15 @@ docker compose -f compose-demo-simple.yaml down -v
 The user manual's *Try it without a carrier* covers failed receipts and
 forwarding MOs.
 
-`compose-demo-advanced.yaml` goes further: three simulated SMSCs (`t-mobile`
-for Poland, `orange-1` and `orange-2` for the rest, each other's fallback),
+`compose-demo-advanced.yaml` goes further: three simulated SMSCs (`smsc-t-mobile`
+for Poland, `smsc-orange-1` and `smsc-orange-2` for the rest, each other's fallback),
 Prometheus and Grafana with the shipped dashboard, and k6 load over REST and
 Kannel (`make perf-advanced`, `make perf-kannel`). See the manual's *Try the
 advanced demo*.
+
+`compose-demo-auth.yaml` is the simple demo with users on both APIs: a Bearer
+token on `/api/v1` and a username/password on Kannel's `sendsms`. Its header
+lists the curl calls that are refused and accepted.
 
 ## How it works
 

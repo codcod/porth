@@ -127,9 +127,9 @@ flowchart LR
     subgraph porth-demo-advanced
         Porth["porth<br/>REST :8080 · Kannel :13013"]
         PG[("postgres")]
-        TM["t-mobile<br/>simulator"]
-        O1["orange-1<br/>simulator"]
-        O2["orange-2<br/>simulator"]
+        TM["smsc-t-mobile<br/>simulator"]
+        O1["smsc-orange-1<br/>simulator"]
+        O2["smsc-orange-2<br/>simulator"]
         Prom["Prometheus :9090"]
         Graf["Grafana :3000"]
     end
@@ -148,15 +148,15 @@ flowchart LR
 | `porth` | The gateway, on the demo's `config.toml` (the `configs:` entry at the end of the
 file) | 8080 (REST), 13013 (Kannel)
 | `postgres`, `migrate` | The message store, and a one-off schema migration | none
-| `t-mobile` | Simulator SMSC; its `/mo` endpoint | 2776
-| `orange-1` | Simulator SMSC; its `/mo` endpoint | 2777
-| `orange-2` | Simulator SMSC; its `/mo` endpoint | 2778
+| `smsc-t-mobile` | Simulator SMSC; its `/mo` endpoint | 2776
+| `smsc-orange-1` | Simulator SMSC; its `/mo` endpoint | 2777
+| `smsc-orange-2` | Simulator SMSC; its `/mo` endpoint | 2778
 | `prometheus` | Scrapes {product} every 5 s and evaluates the shipped alert rules | 9090
 | `grafana` | The shipped dashboard, open to anonymous viewers | 3000
 |===
 
 Each simulator's service name is also its SMSC name in {product}, so `/admin`, the
-`smsc` label in the metrics, Grafana, and `docker compose stop orange-1` all use the same
+`smsc` label in the metrics, Grafana, and `docker compose stop smsc-orange-1` all use the same
 name.
 
 === How it routes
@@ -165,14 +165,14 @@ name.
 |===
 | Destination | SMSC | Fallback
 
-| `48…` (Poland) | `t-mobile` | `orange-1`
-| `49…` | `orange-2` | `orange-1`
-| anything else (`routing.default`) | `orange-1` | `orange-2`
+| `48…` (Poland) | `smsc-t-mobile` | `smsc-orange-1`
+| `49…` | `smsc-orange-2` | `smsc-orange-1`
+| anything else (`routing.default`) | `smsc-orange-1` | `smsc-orange-2`
 |===
 
-"Via orange-1 or orange-2" is a prefix split plus failover. {product} sends each number
+"Via smsc-orange-1 or smsc-orange-2" is a prefix split plus failover. {product} sends each number
 through one SMSC and does not load-balance across several (see <<Routing and SMSC links>>).
-So `49` goes to orange-2 to give it traffic of its own, and each SMSC names a `fallback`.
+So `49` goes to smsc-orange-2 to give it traffic of its own, and each SMSC names a `fallback`.
 A message moves to the fallback once its own SMSC has been unbound for `fallback_after`
 seconds (10), and only while the fallback is bound. A move goes only to the SMSC's own
 fallback, never past it in one step (see <<SMSCs>>). With both oranges down, nothing moves:
@@ -185,12 +185,12 @@ seconds after an SMSC goes away. The walk-through below waits 15.
 
 The differences are deliberate, so each SMSC's dashboard panels look different:
 
-* `t-mobile` sends every receipt after 0.5 s, all `DELIVRD`. {product} limits it to
+* `smsc-t-mobile` sends every receipt after 0.5 s, all `DELIVRD`. {product} limits it to
   `throughput = 10` messages a second, below the rate `make perf-advanced` sends to Poland,
   so its queue (`porth_messages_waiting`) climbs during a run and drains afterwards.
-* `orange-1` answers after 1 s, and about one message in ten comes back `UNDELIV`
+* `smsc-orange-1` answers after 1 s, and about one message in ten comes back `UNDELIV`
   (`failed`).
-* `orange-2` answers after 2 s, and about one in twenty comes back `EXPIRED`.
+* `smsc-orange-2` answers after 2 s, and about one in twenty comes back `EXPIRED`.
 
 === Walk-through
 
@@ -201,16 +201,16 @@ The file's header comment has the same commands.
 docker compose -f compose-demo-advanced.yaml up -d
 until curl -sf localhost:8080/ready; do sleep 1; done      # all three SMSCs bound
 
-# Poland via t-mobile, Greece via orange-1 (the default)
+# Poland via smsc-t-mobile, Greece via smsc-orange-1 (the default)
 curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
   -d '{"from_number":"ACME","to_number":"48600000000","message":"hello"}'
 curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
   -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
 
-# Kannel sendsms, forcing orange-2 with smsc=
-curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi&smsc=orange-2'
+# Kannel sendsms, forcing smsc-orange-2 with smsc=
+curl -s 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi&smsc=smsc-orange-2'
 
-# An MO through each simulator (2776 t-mobile, 2777 orange-1, 2778 orange-2)
+# An MO through each simulator (2776 smsc-t-mobile, 2777 smsc-orange-1, 2778 smsc-orange-2)
 curl -s -X POST 'localhost:2777/mo?from=306900000000&to=ACME&text=hi'
 docker compose -f compose-demo-advanced.yaml logs porth | grep 'MO from'
 
@@ -222,21 +222,21 @@ forwarding it.
 
 === Failover
 
-Stop `orange-1`, wait for the move, and send to a number that routes to it:
+Stop `smsc-orange-1`, wait for the move, and send to a number that routes to it:
 
 [source,bash]
 ----
-docker compose -f compose-demo-advanced.yaml stop orange-1
+docker compose -f compose-demo-advanced.yaml stop smsc-orange-1
 sleep 15
 curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
   -d '{"from_number":"ACME","to_number":"306900000000","message":"failover"}'
 sleep 3
-docker compose -f compose-demo-advanced.yaml logs porth | grep 'moved to SMSC orange-2'
-docker compose -f compose-demo-advanced.yaml start orange-1
+docker compose -f compose-demo-advanced.yaml logs porth | grep 'moved to SMSC smsc-orange-2'
+docker compose -f compose-demo-advanced.yaml start smsc-orange-1
 ----
 
-Grep for `moved to SMSC`, not `sent through SMSC orange-2`: orange-2 carries `49` traffic
-anyway. While `orange-1` is stopped, `localhost:8080/admin` shows it unbound and `/ready`
+Grep for `moved to SMSC`, not `sent through SMSC smsc-orange-2`: smsc-orange-2 carries `49` traffic
+anyway. While `smsc-orange-1` is stopped, `localhost:8080/admin` shows it unbound and `/ready`
 answers `503`. In Grafana, `porth_smsc_bound` drops to 0 for it. After `start`, it rebinds
 within `reconnect_delay`.
 
@@ -261,7 +261,7 @@ Both scripts queue real messages, so run them only against the demo's simulators
 * `make perf-advanced` runs `tests/performance/k6/advanced.js` for 30 seconds:
 ** REST sends at 30 a second, half to Poland;
 ** sends followed by a status poll;
-** Kannel `sendsms` with `smsc=orange-2`;
+** Kannel `sendsms` with `smsc=smsc-orange-2`;
 ** an MO through each simulator every second;
 ** `/health`.
 +

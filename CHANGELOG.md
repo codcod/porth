@@ -8,11 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Added**
 
-- An advanced demo, `compose-demo-advanced.yaml`: three simulator SMSCs (`t-mobile` for
-  Poland, `orange-1` and `orange-2` for the rest, each other's fallback), Prometheus and
+- An advanced demo, `compose-demo-advanced.yaml`: three simulator SMSCs (`smsc-t-mobile` for
+  Poland, `smsc-orange-1` and `smsc-orange-2` for the rest, each other's fallback), Prometheus and
   Grafana running the shipped alert rules and dashboard, and two k6 scripts, `advanced.js`
   (`make perf-advanced`) and `kannel.js` (`make perf-kannel`). The user manual's *Try the
   advanced demo* describes it (POR-055).
+- An auth demo, `compose-demo-auth.yaml`: the simple demo with a Bearer token on the REST
+  API and a `sendsms` user on the Kannel API.
 - A read-only HTML status page at `GET /admin`: bind state, backlog and since-start
   counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off. New dependency:
   `jinja2` (POR-050).

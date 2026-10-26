@@ -16,9 +16,9 @@ import { check, sleep } from "k6";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
 const KANNEL_URL = __ENV.KANNEL_URL || "http://localhost:13013";
-// t-mobile, orange-1, orange-2
+// smsc-t-mobile, smsc-orange-1, smsc-orange-2
 const MO_URLS = (__ENV.MO_URLS || "http://localhost:2776,http://localhost:2777,http://localhost:2778").split(",");
-const SMSCS = ["t-mobile", "orange-1", "orange-2"];
+const SMSCS = ["smsc-t-mobile", "smsc-orange-1", "smsc-orange-2"];
 const JSON_HEADERS = { headers: { "Content-Type": "application/json" } };
 
 export const options = {
@@ -50,7 +50,7 @@ export const options = {
   },
 };
 
-// Half to Poland (t-mobile), a quarter to 49 (orange-2), the rest to the default (orange-1)
+// Half to Poland (smsc-t-mobile), a quarter to 49 (smsc-orange-2), the rest to the default (smsc-orange-1)
 function destination() {
   const r = Math.random();
   if (r < 0.5) return "48600000000";
@@ -104,7 +104,7 @@ export function statusPoll() {
 }
 
 export function kannelForced() {
-  const res = http.get(`${KANNEL_URL}/cgi-bin/sendsms?from=ACME&to=306900000000&text=k6&smsc=orange-2`);
+  const res = http.get(`${KANNEL_URL}/cgi-bin/sendsms?from=ACME&to=306900000000&text=k6&smsc=smsc-orange-2`);
   check(res, {
     "sendsms is 202": (r) => r.status === 202,
     "sendsms accepted": (r) => r.body.startsWith("0: Accepted for delivery"),
