@@ -9,7 +9,7 @@ import { check, sleep } from "k6";
 //
 //   docker compose -f compose-demo-advanced.yaml up -d
 //   until curl -sf localhost:8080/ready; do sleep 1; done
-//   make perf-advanced      # or: k6 run tests/performance/k6/advanced.js
+//   make perf-demo-advanced # or: k6 run tests/performance/k6/demo-advanced.js
 //
 // The run fails if any SMSC reaches no more final statuses (porth_messages_final) than
 // it had before the run, i.e. routing sent it nothing.

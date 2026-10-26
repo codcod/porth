@@ -20,13 +20,13 @@ and EPUB to every GitHub release (build it locally with `make docs-build`).
 
 ## Try it
 
-No carrier needed: `compose-demo-simple.yaml` runs Porth against Smppai's simulator
+No carrier needed: `compose-demo.yaml` runs Porth against Smppai's simulator
 SMSC, which answers every message with a delivery receipt. The steps below
 use `jq`.
 
 ```bash
 git clone https://github.com/codcod/porth.git && cd porth
-docker compose -f compose-demo-simple.yaml up -d
+docker compose -f compose-demo.yaml up -d
 until curl -sf localhost:8080/ready; do sleep 1; done
 
 # Send, then poll: "status": "delivered" a second later
@@ -38,23 +38,21 @@ curl -s localhost:8080/api/v1/sms/status/$id
 
 # An MO from the simulator: porth logs "MO from ***000 dropped: mo.url is not set"
 curl -s -X POST 'localhost:2776/mo?from=306900000000&to=ACME&text=hi'
-docker compose -f compose-demo-simple.yaml logs porth | grep 'MO from'
+docker compose -f compose-demo.yaml logs porth | grep 'MO from'
 
-docker compose -f compose-demo-simple.yaml down -v
+docker compose -f compose-demo.yaml down -v
 ```
 
-The user manual's *Try it without a carrier* covers failed receipts and
-forwarding MOs.
+The other demos build on it. Each has a k6 load script:
 
-`compose-demo-advanced.yaml` goes further: three simulated SMSCs (`smsc-t-mobile`
-for Poland, `smsc-orange-1` and `smsc-orange-2` for the rest, each other's fallback),
-Prometheus and Grafana with the shipped dashboard, and k6 load over REST and
-Kannel (`make perf-advanced`, `make perf-kannel`). See the manual's *Try the
-advanced demo*.
+| Demo | Shows | Load |
+|---|---|---|
+| `compose-demo.yaml` | the steps above, plus Kannel's `sendsms` on 13013 | `make perf-demo` |
+| `-f compose-demo.yaml -f compose-demo-auth.yaml` | a Bearer token on `/api/v1`, a `sendsms` user, and the refusals without them | `make perf-demo-auth` |
+| `compose-demo-advanced.yaml` | three simulated SMSCs with routing and failover, Prometheus and Grafana with the shipped dashboard | `make perf-demo-advanced` |
+| `compose-kannel.yaml` | a reference Kannel, to compare its `sendsms` with Porth's | none |
 
-`compose-demo-auth.yaml` is the simple demo with users on both APIs: a Bearer
-token on `/api/v1` and a username/password on Kannel's `sendsms`. Its header
-lists the curl calls that are refused and accepted.
+The user manual's *Demos* chapter describes the goal of each and how to run it.
 
 ## How it works
 

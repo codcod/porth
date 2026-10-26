@@ -129,8 +129,9 @@ needs Docker.
 == What the tests do not prove
 
 * **Throughput under load.** The tests send a handful of messages. The k6 scripts in
-  `tests/performance/k6` measure a running {product}: `make perf` (REST), `make perf-kannel`
-  (`sendsms`), and `make perf-advanced` (all of <<Try the advanced demo>>).
+  `tests/performance/k6` measure a running {product}: `make perf` (`/health`), and one
+  script per demo, `make perf-demo`, `make perf-demo-auth` and `make perf-demo-advanced`
+  (see <<Demos>>).
 * **The restart window.** A message sent again after a crash, and a receipt lost from memory
   at a crash, are known limitations, not features. See <<Limitations>>.
 * **Real operators.** The test SMSCs follow SMPP 3.4 as smppai implements it. An operator's

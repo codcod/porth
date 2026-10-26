@@ -1,11 +1,10 @@
-# compose-demo-simple.yaml with users on both APIs: a Bearer token on the REST API
-# (/api/v1) and a username/password on Kannel's sendsms. Once a [porth.http.users.*] or
-# [porth.kannel.users.*] table exists, that API refuses any caller without credentials.
-# /health, /ready, /status, /metrics and /admin stay open. The token and password below
-# are demo values; ports are published on 127.0.0.1 only. Run one demo at a time: they
-# all use 8080 and 2776.
+# An overlay on compose-demo.yaml that adds users to both APIs: a Bearer token on the REST
+# API (/api/v1) and a username/password on Kannel's sendsms. Once a [porth.http.users.*]
+# or [porth.kannel.users.*] table exists, that API refuses any caller without credentials.
+# /health, /ready, /status, /metrics and /admin stay open. The token and password are demo
+# values.
 #
-#   docker compose -f compose-demo-auth.yaml up -d
+#   docker compose -f compose-demo.yaml -f compose-demo-auth.yaml up -d
 #   until curl -sf localhost:8080/ready; do sleep 1; done
 #
 #   # REST: no token is a 401, the token is accepted
@@ -14,64 +13,22 @@
 #   curl -s -X POST localhost:8080/api/v1/sms/send -H 'Content-Type: application/json' \
 #     -H 'Authorization: Bearer demo-token-0123456789abcdef' \
 #     -d '{"from_number":"ACME","to_number":"306900000000","message":"hello"}'
-#   curl -s localhost:8080/api/v1/sms/status/<message_id> \
-#     -H 'Authorization: Bearer demo-token-0123456789abcdef'   # "delivered"
 #
 #   # Kannel: no or a wrong password is a 403, the right one is accepted
 #   curl -si 'localhost:13013/cgi-bin/sendsms?from=ACME&to=306900000000&text=hi'
 #   curl -s 'localhost:13013/cgi-bin/sendsms?username=acme&password=demo-secret&from=ACME&to=306900000000&text=hi'
 #
-#   docker compose -f compose-demo-auth.yaml logs porth | grep 'authorization failed'
-#   docker compose -f compose-demo-auth.yaml down -v
+#   docker compose -f compose-demo.yaml logs porth | grep 'authorization failed'
 #
+#   # Load: make perf-demo-auth (both APIs, with and without credentials)
+#
+#   docker compose -f compose-demo.yaml down -v
+#
+# Compose replaces config.toml whole rather than merging it, so the settings below repeat
+# compose-demo.yaml's. Compose doesn't notice a changed config, so to add or drop the users
+# on a running demo, add --force-recreate porth to up.
 # allow_ip is left out: a request through a published port comes from Docker's gateway,
-# not 127.0.0.1. The image is built or pulled as in compose-demo-simple.yaml (see its header).
-
-name: porth-demo-auth
-
-x-porth: &porth
-  image: ghcr.io/codcod/porth:latest
-  configs:
-    - source: config.toml
-      target: /opt/porth/config/config.toml
-
-services:
-  postgres:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_USER: porth
-      POSTGRES_PASSWORD: porth
-      POSTGRES_DB: porth
-    volumes: [postgres-data:/var/lib/postgresql]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U porth -d porth"]
-      interval: 2s
-      timeout: 5s
-      retries: 15
-
-  migrate:
-    <<: *porth
-    command: ["-m", "alembic", "upgrade", "head"]
-    depends_on:
-      postgres: {condition: service_healthy}
-
-  smsc:
-    <<: *porth
-    command: ["-m", "smpp.sim", "--host", "0.0.0.0"]
-    ports: ["127.0.0.1:2776:2776"]
-
-  porth:
-    <<: *porth
-    # build: here alone, so up builds the image once; migrate and smsc reuse the tag
-    build: .
-    depends_on:
-      migrate: {condition: service_completed_successfully}
-      smsc: {condition: service_started}
-    restart: unless-stopped
-    ports: ["127.0.0.1:8080:8080", "127.0.0.1:13013:13013"]
-
-volumes:
-  postgres-data:
+# not 127.0.0.1.
 
 configs:
   config.toml:

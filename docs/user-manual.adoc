@@ -11,6 +11,8 @@ include::user-manual/introduction.adoc[leveloffset=+1]
 
 include::user-manual/installation.adoc[leveloffset=+1]
 
+include::user-manual/demos.adoc[leveloffset=+1]
+
 include::user-manual/configuration.adoc[leveloffset=+1]
 
 include::user-manual/http-api.adoc[leveloffset=+1]

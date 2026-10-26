@@ -10,11 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - An advanced demo, `compose-demo-advanced.yaml`: three simulator SMSCs (`smsc-t-mobile` for
   Poland, `smsc-orange-1` and `smsc-orange-2` for the rest, each other's fallback), Prometheus and
-  Grafana running the shipped alert rules and dashboard, and two k6 scripts, `advanced.js`
-  (`make perf-advanced`) and `kannel.js` (`make perf-kannel`). The user manual's *Try the
-  advanced demo* describes it (POR-055).
-- An auth demo, `compose-demo-auth.yaml`: the simple demo with a Bearer token on the REST
-  API and a `sendsms` user on the Kannel API.
+  Grafana running the shipped alert rules and dashboard (POR-055).
+- An auth overlay, `compose-demo-auth.yaml`: given as a second `-f` after `compose-demo.yaml`,
+  it adds a Bearer token on the REST API and a `sendsms` user on the Kannel API.
+- One k6 script per demo: `demo.js` (`make perf-demo`; `AUTH=1`, `make perf-demo-auth`, for the
+  auth overlay, which also checks the refusals) and `demo-advanced.js` (`make perf-demo-advanced`).
+- A *Demos* chapter in the user manual: the goal of each demo, what runs, and how to run it
+  and its load script.
 - A read-only HTML status page at `GET /admin`: bind state, backlog and since-start
   counters per SMSC, refreshed every 10 s. `http.admin = false` turns it off. New dependency:
   `jinja2` (POR-050).
@@ -29,8 +31,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Changed**
 
-- `compose.demo.yaml` is now `compose-demo-simple.yaml`, next to the new advanced demo.
-  Its contents are unchanged (POR-055).
+- `compose.demo.yaml` is now `compose-demo.yaml`, and also publishes the Kannel port,
+  13013 (POR-055).
+- The reference Kannel moved from `compose.yaml` to `compose-kannel.yaml`, with its ports on
+  127.0.0.1; `compose.yaml` is the development PostgreSQL only.
+- The k6 `script.js` is now `health.js`, and `make perf` checks `/health` only: its `SEND=1`
+  sends moved to `demo.js`.
 - The Alembic migrations ship inside the porth package (`porth:migrations`), and the
   image no longer has `/opt/porth/migrations`. Without `-x config=`, alembic reads
   `config/config.toml` from the current directory. (POR-047)

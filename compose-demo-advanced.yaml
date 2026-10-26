@@ -1,7 +1,7 @@
-# Porth against three simulated carriers, with Prometheus and Grafana: routing, failover,
-# the Kannel API and monitoring, none of which compose-demo-simple.yaml shows. Every SMSC is
-# smppai's simulator (test-only: any bind, no authentication), and neither API has users,
-# so every port is published on 127.0.0.1 only. Run one demo at a time: both use 8080 and 2776.
+# Porth against three simulated carriers, with Prometheus and Grafana: routing, failover
+# and monitoring, none of which compose-demo.yaml shows. Every SMSC is smppai's simulator
+# (test-only: any bind, no authentication), and neither API has users, so every port is
+# published on 127.0.0.1 only. Run one demo at a time: they all use 8080, 13013 and 2776.
 #
 #   docker compose -f compose-demo-advanced.yaml up -d
 #   until curl -sf localhost:8080/ready; do sleep 1; done          # all three SMSCs bound
@@ -27,13 +27,13 @@
 #   docker compose -f compose-demo-advanced.yaml logs porth | grep 'moved to SMSC smsc-orange-2'
 #   docker compose -f compose-demo-advanced.yaml start smsc-orange-1
 #
-#   # Load: make perf-advanced (REST, Kannel, MO, all three SMSCs) and make perf-kannel
+#   # Load: make perf-demo-advanced (REST, Kannel, MO, all three SMSCs)
 #   # Grafana: localhost:3000 (anonymous viewer; admin/admin) · /admin: localhost:8080/admin
 #   # Prometheus: localhost:9090/targets and localhost:9090/alerts
 #
 #   docker compose -f compose-demo-advanced.yaml down -v
 #
-# The porth image is built or pulled as in compose-demo-simple.yaml (see its header).
+# The porth image is built or pulled as in compose-demo.yaml (see its header).
 # Prometheus and Grafana load deploy/prometheus/alerts.yml and deploy/grafana/porth.json
 # unchanged.
 
@@ -183,7 +183,7 @@ configs:
       port = 2775
       system_id = "porth"
       password = "demo"
-      throughput = 10  # below advanced.js's rate to Poland, so its backlog shows
+      throughput = 10  # below demo-advanced.js's rate to Poland, so its backlog shows
       fallback = "smsc-orange-1"
 
       [porth.smsc.smsc-orange-1]
